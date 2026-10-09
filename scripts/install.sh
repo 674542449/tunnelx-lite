@@ -98,7 +98,9 @@ install_all(){
   fi
   write_unit
   systemctl daemon-reload
-  systemctl enable --now txlite >/dev/null
+  systemctl enable txlite >/dev/null
+  # restart (not enable --now) so a reinstall also loads the replaced binary
+  systemctl restart txlite
   sleep 2
   systemctl is-active --quiet txlite || { journalctl -u txlite -n 20 --no-pager; die "服务启动失败"; }
   open_firewall
