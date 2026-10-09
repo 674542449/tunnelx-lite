@@ -19,12 +19,13 @@ command -v systemctl >/dev/null || die "需要 systemd"
 case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) die "不支持的 CPU 架构：$(uname -m)";; esac
 
 download(){
-  local base="https://github.com/$REPO/releases/latest/download" work
+  local base="https://github.com/$REPO/releases/latest/download" work want
   work=$(mktemp -d); trap 'rm -rf "$work"' RETURN
   echo "下载 txlite（linux-$arch）……"
   curl -fsSL --retry 3 -o "$work/txlite" "$base/txlite-linux-$arch"
   curl -fsSL --retry 3 -o "$work/SHA256SUMS" "$base/SHA256SUMS"
-  (cd "$work" && grep " txlite-linux-$arch\$" SHA256SUMS | sed "s/txlite-linux-$arch/txlite/" | sha256sum -c --quiet -) || die "下载文件校验失败"
+  want=$(grep -E "[ *]txlite-linux-$arch\$" "$work/SHA256SUMS" | cut -d' ' -f1)
+  test -n "$want" && test "$(sha256sum "$work/txlite" | cut -d' ' -f1)" = "$want" || die "下载文件校验失败"
   install -m 755 "$work/txlite" "$BIN.new" && mv -f "$BIN.new" "$BIN"
 }
 

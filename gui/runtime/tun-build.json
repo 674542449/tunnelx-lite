@@ -1,0 +1,15 @@
+{
+  "project": "https://github.com/xjasonlyu/tun2socks",
+  "commit": "5d9fac67bb1095a5d2bd959216f85e6434524731",
+  "source_sha256": "5e0001d464fcfb24f4a4d82aa1346985cbe53760dd92189d415c1bc47529d07c",
+  "go_build": [
+    "go",
+    "build",
+    "-trimpath",
+    "-ldflags=-s -w",
+    "-o",
+    "tun2socks.exe",
+    "."
+  ],
+  "go_version": "go version go1.27.0 windows/amd64"
+}

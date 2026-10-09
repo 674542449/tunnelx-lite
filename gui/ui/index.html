@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>txlite</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="toolbar" role="toolbar" aria-label="主工具栏">
+  <button id="import-clipboard" type="button" title="从剪贴板导入 txlite:// 分享链接 (Ctrl+V)">从剪贴板导入</button>
+  <button id="import-manual" type="button" title="粘贴一个或多个分享链接">添加链接</button>
+  <span class="sep"></span>
+  <button id="probe-all" type="button" title="测试全部服务器延迟">测试全部延迟</button>
+  <span class="sep"></span>
+  <button id="connect" type="button" class="primary">连接</button>
+  <button id="cancel" type="button" hidden>取消</button>
+  <span class="sep"></span>
+  <button id="open-settings" type="button">设置</button>
+  <button id="open-logs" type="button" title="打开日志目录">日志目录</button>
+  <span class="grow"></span>
+  <input id="filter" type="search" placeholder="筛选服务器" aria-label="筛选服务器">
+</header>
+
+<p id="warning" class="warning" hidden></p>
+
+<main class="table-wrap" id="table-wrap">
+  <table id="servers" aria-label="服务器列表">
+    <thead>
+      <tr><th class="c-act"></th><th>别名</th><th>地址</th><th class="c-port">端口</th><th class="c-type">类型</th><th class="c-fam">地址类型</th><th class="c-ms">延迟</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="empty" class="empty" hidden>
+    <strong>还没有服务器</strong>
+    <p>在服务器面板复制 txlite:// 分享链接，然后点击「从剪贴板导入」或按 Ctrl+V。</p>
+  </div>
+</main>
+
+<section class="logpane" aria-label="信息">
+  <div class="logpane-head"><span>信息</span><button id="clear-log" type="button" class="link">清空</button></div>
+  <pre id="log" class="log" aria-live="polite"></pre>
+</section>
+
+<footer class="statusbar">
+  <label class="sb-item"><input id="system-proxy" type="checkbox"> 系统代理</label>
+  <label class="sb-item">路由
+    <select id="mode" aria-label="路由模式">
+      <option value="bypass_cn">绕过大陆</option>
+      <option value="global">全局代理</option>
+      <option value="tun">TUN 模式</option>
+    </select>
+  </label>
+  <span class="sb-item"><span id="state-dot" class="dot"></span><span id="state">未连接</span></span>
+  <span class="sb-item grow" id="current"></span>
+  <span class="sb-item mono" id="speed">↑ 0 B/s ↓ 0 B/s</span>
+  <span class="sb-item mono muted" id="ports"></span>
+</footer>
+
+<div id="menu" class="menu" role="menu" hidden>
+  <button type="button" data-cmd="connect" role="menuitem">设为活动服务器并连接 (Enter)</button>
+  <button type="button" data-cmd="probe" role="menuitem">测试延迟</button>
+  <button type="button" data-cmd="copy" role="menuitem">复制分享链接</button>
+  <button type="button" data-cmd="rename" role="menuitem">重命名 (F2)</button>
+  <hr>
+  <button type="button" data-cmd="remove" role="menuitem" class="danger">删除 (Delete)</button>
+</div>
+
+<dialog id="dialog">
+  <form method="dialog" id="dialog-form">
+    <h2 id="dialog-title"></h2>
+    <div id="dialog-body"></div>
+    <p id="dialog-error" class="error" role="alert"></p>
+    <div class="dialog-actions"><button value="cancel" type="button" id="dialog-cancel">取消</button><button value="ok" type="submit" class="primary" id="dialog-ok">确定</button></div>
+  </form>
+</dialog>
+<script src="app.js"></script>
+</body>
+</html>

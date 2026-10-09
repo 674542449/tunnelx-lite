@@ -1,0 +1,22 @@
+[
+  {
+    "source": "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/b8bfd1e579b80504d01ccecb06ade7797a7680f0/direct-list.txt",
+    "sha256": "3cd1b4ddb0d1fc73eb505d2cc34cd065c50899e0c34fb91c29286d546b77023b",
+    "file": "direct-list.txt"
+  },
+  {
+    "source": "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/b8bfd1e579b80504d01ccecb06ade7797a7680f0/proxy-list.txt",
+    "sha256": "32c451668eb87e5a08d1281f082985c9b171764328aa5650f93ea73ee49aef10",
+    "file": "proxy-list.txt"
+  },
+  {
+    "source": "https://raw.githubusercontent.com/gaoyifan/china-operator-ip/c5f638aa2f229909aafcbbd8f220bb48b00c4eaa/china.txt",
+    "sha256": "177c666b94dea7cfa7e5497a4b210680c220aee9ca865b22f58fadb0bda89660",
+    "file": "china.txt"
+  },
+  {
+    "source": "https://raw.githubusercontent.com/gaoyifan/china-operator-ip/c5f638aa2f229909aafcbbd8f220bb48b00c4eaa/china6.txt",
+    "sha256": "2f10cc43d117285f2199550f1c2b5eee9ab3f5f18f053521a1e88381e197677a",
+    "file": "china6.txt"
+  }
+]
