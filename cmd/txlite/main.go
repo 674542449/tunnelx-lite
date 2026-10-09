@@ -26,6 +26,8 @@ func main() {
 	name := flag.String("name", "", "server name for share links (init)")
 	port := flag.Int("port", 0, "proxy TCP port (init; 0 picks a random port)")
 	panelPort := flag.Int("panel-port", 0, "panel HTTPS port (init; 0 picks a random port)")
+	inbound := flag.String("inbound", "", "init: inbound family: empty (dual stack), ipv4 or ipv6")
+	outbound := flag.String("outbound", "", "init: outbound policy: empty, prefer_ipv4, prefer_ipv6, ipv4 or ipv6")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "用法：txlite [-dir 目录] [init|run|link|info|password|version]\n不带参数运行时打开管理菜单。")
 	}
@@ -36,7 +38,7 @@ func main() {
 	case "":
 		err = menu(d)
 	case "init":
-		err = initialize(d, *name, *port, *panelPort)
+		err = initialize(d, *name, *port, *panelPort, *inbound, *outbound)
 	case "run":
 		err = run(d)
 	case "link":
@@ -72,7 +74,11 @@ func randomPort(avoid int) int {
 	return 20000 + int(time.Now().UnixNano()%30000)
 }
 
-func initialize(d lite.Dir, name string, port, panelPort int) error {
+func initialize(d lite.Dir, name string, port, panelPort int, inbound, outbound string) error {
+	probe := lite.Config{Name: "x", Port: 1, PanelPort: 2, PanelPath: "abcdefghij", Token: lite.NewToken(), Inbound: inbound, OutboundIP: outbound}
+	if err := probe.Validate(); err != nil {
+		return err
+	}
 	if name == "" {
 		host, _ := os.Hostname()
 		name = "txlite-" + host
@@ -86,9 +92,15 @@ func initialize(d lite.Dir, name string, port, panelPort int) error {
 	if panelPort == 0 {
 		panelPort = randomPort(port)
 	}
-	_, password, err := lite.Init(d, name, port, panelPort)
+	c, password, err := lite.Init(d, name, port, panelPort)
 	if err != nil {
 		return err
+	}
+	if inbound != "" || outbound != "" {
+		c.Inbound, c.OutboundIP = inbound, outbound
+		if err = lite.Save(d, c); err != nil {
+			return err
+		}
 	}
 	fmt.Println("初始化完成。")
 	fmt.Printf("面板密码：%s\n（只显示这一次；忘记后运行 txlite password 重置）\n", password)

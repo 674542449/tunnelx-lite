@@ -53,7 +53,7 @@ func startServer(t *testing.T, echo string) Link {
 		os.WriteFile(filepath.Join(dir, name), data, 0600)
 	}
 	port, tok := freePort(t), token(t)
-	cfg := config.Server{Listen: net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), CertFile: filepath.Join(dir, "cert.pem"), KeyFile: filepath.Join(dir, "key.pem"), ECHKeyFile: filepath.Join(dir, "ech.json"), InnerName: inner, InnerCertFile: filepath.Join(dir, "cert.pem"), InnerKeyFile: filepath.Join(dir, "key.pem"), Tokens: []string{tok}, AllowedPrivateTargets: []string{echo}}
+	cfg := config.Server{Listen: net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), CertFile: filepath.Join(dir, "cert.pem"), KeyFile: filepath.Join(dir, "key.pem"), ECHKeyFile: filepath.Join(dir, "ech.json"), InnerName: inner, InnerCertFile: filepath.Join(dir, "cert.pem"), InnerKeyFile: filepath.Join(dir, "key.pem"), Tokens: []string{tok}, AllowedPrivateTargets: []string{echo}, Network: "tcp4"}
 	s, err := server.New(cfg)
 	if err != nil {
 		t.Fatal(err)

@@ -27,10 +27,10 @@ func Links(c Config, id Identity, v4, v6 string) []ShareLink {
 			hosts = append(hosts, entry{"自定义 · " + h, h})
 		}
 	} else {
-		if v4 != "" {
+		if v4 != "" && c.Inbound != "ipv6" {
 			hosts = append(hosts, entry{"IPv4", v4})
 		}
-		if v6 != "" {
+		if v6 != "" && c.Inbound != "ipv4" {
 			hosts = append(hosts, entry{"IPv6", v6})
 		}
 	}

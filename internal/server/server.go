@@ -73,7 +73,15 @@ func (s *Server) Serve(ctx context.Context) error {
 		return e
 	}
 	errs := make(chan error, 1)
-	go func() { errs <- s.HTTP.ListenAndServeTLS("", "") }()
+	network := s.Config.Network
+	if network == "" {
+		network = "tcp"
+	}
+	ln, e := net.Listen(network, s.Config.Listen)
+	if e != nil {
+		return e
+	}
+	go func() { errs <- s.HTTP.ServeTLS(ln, "", "") }()
 	select {
 	case <-ctx.Done():
 	case e = <-errs:

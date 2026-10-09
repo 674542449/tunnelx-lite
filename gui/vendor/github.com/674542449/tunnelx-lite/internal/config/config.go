@@ -63,6 +63,7 @@ type Server struct {
 	DNSCacheTTL           int                 `json:"dns_cache_ttl_seconds,omitempty"`
 	AccessLog             string              `json:"access_log,omitempty"`
 	OutboundIP            string              `json:"outbound_ip,omitempty"`
+	Network               string              `json:"network,omitempty"` // "", "tcp4" or "tcp6": inbound address family
 }
 type ECHKey struct {
 	Config     []byte `json:"config"`
@@ -207,6 +208,9 @@ func (s *Server) Validate() error {
 	}
 	if s.BandwidthLimit != 0 && (s.BandwidthLimit < 1024 || s.BandwidthLimit > 1<<30) {
 		return errors.New("bandwidth_limit_bytes must be 0 or 1024..1073741824")
+	}
+	if s.Network != "" && s.Network != "tcp4" && s.Network != "tcp6" {
+		return errors.New("network must be empty, tcp4 or tcp6")
 	}
 	switch s.OutboundIP {
 	case "", "prefer_ipv4", "prefer_ipv6", "ipv4", "ipv6":

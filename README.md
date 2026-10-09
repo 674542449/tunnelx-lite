@@ -3,7 +3,7 @@
 一个可以单独使用的代理服务：服务器一键安装，复制分享链接，粘贴进 Windows 客户端就能用。没有账号、没有订阅后台。
 
 - **协议**：HTTP/2 CONNECT 隧道 + TLS 1.3 + ECH（加密 SNI），客户端按证书公钥指纹校验服务器，不需要域名。
-- **服务端**：Ubuntu / Debian，入站同时监听 IPv4 / IPv6，出站可选 IPv4 优先、IPv6 优先、仅 IPv4、仅 IPv6；自带 HTTPS 管理面板和 `txlite` 命令行菜单；安装时自动开启 BBR + fq。
+- **服务端**：Ubuntu / Debian，入站可选双栈 / 仅 IPv4 / 仅 IPv6，出站可选自动、IPv4 优先、IPv6 优先、仅 IPv4、仅 IPv6；自带 HTTPS 管理面板和 `txlite` 命令行菜单；安装时自动开启 BBR + fq。
 - **客户端**：Windows 图形界面（类似 v2rayN），支持绕过大陆、全局代理、TUN 模式。
 
 ## 服务端安装
@@ -25,6 +25,17 @@ bash <(curl -fsSL https://raw.githubusercontent.com/674542449/tunnelx-lite/main/
 PORT=443 PANEL_PORT=8443 bash <(curl -fsSL https://raw.githubusercontent.com/674542449/tunnelx-lite/main/scripts/install.sh)
 ```
 
+入站 / 出站的 IP 版本也可以在安装时指定（之后也能在面板「设置」里改）：
+
+```bash
+INBOUND=ipv6 OUTBOUND=ipv6 bash <(curl -fsSL https://raw.githubusercontent.com/674542449/tunnelx-lite/main/scripts/install.sh)
+```
+
+| 变量 | 可选值 | 含义 |
+|---|---|---|
+| `INBOUND` | 留空（双栈）、`ipv4`、`ipv6` | 代理端口接受哪种 IP 的客户端连接；分享链接会跟着只给对应地址 |
+| `OUTBOUND` | 留空（自动）、`prefer_ipv4`、`prefer_ipv6`、`ipv4`、`ipv6` | 服务器访问目标网站用哪种 IP |
+
 **云服务器记得在安全组放行这两个 TCP 端口。** 如果系统启用了 ufw，安装脚本会自动放行。
 
 以后在服务器上输入 `txlite` 打开管理菜单：查看面板地址和分享链接、重置面板密码、重启 / 停止 / 启动、查看日志、更新、卸载。
@@ -42,7 +53,7 @@ PORT=443 PANEL_PORT=8443 bash <(curl -fsSL https://raw.githubusercontent.com/674
 
 - 运行时间、当前连接、累计上下行和实时速率、系统负载 / 内存 / 磁盘、拥塞控制
 - 分享链接（IPv4 / IPv6 / 自定义地址）、一键复制、二维码
-- 设置：名称、代理端口、出站方式、限速、自定义分享地址（例如填域名）
+- 设置：名称、代理端口、入站方式（双栈 / 仅 IPv4 / 仅 IPv6）、出站方式、限速、自定义分享地址（例如填域名）
 - 安全：修改面板密码、重置密钥（旧链接立即失效）、流量清零
 - 运行日志、重启服务
 

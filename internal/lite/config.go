@@ -18,7 +18,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/config"
 )
 
-const Version = "v0.1.0"
+const Version = "v0.1.1"
 
 type Config struct {
 	Name           string   `json:"name"`
@@ -30,6 +30,7 @@ type Config struct {
 	InnerName      string   `json:"inner_name"`
 	PublicName     string   `json:"public_name"`
 	Hosts          []string `json:"hosts,omitempty"`
+	Inbound        string   `json:"inbound,omitempty"` // "", "ipv4" or "ipv6"
 	OutboundIP     string   `json:"outbound_ip,omitempty"`
 	BandwidthLimit int64    `json:"bandwidth_limit_bytes,omitempty"`
 }
@@ -68,6 +69,11 @@ func (c *Config) Validate() error {
 		}
 		c.Hosts[i] = h
 	}
+	switch c.Inbound {
+	case "", "ipv4", "ipv6":
+	default:
+		return errors.New("入站方式无效")
+	}
 	switch c.OutboundIP {
 	case "", "prefer_ipv4", "prefer_ipv6", "ipv4", "ipv6":
 	default:
@@ -97,7 +103,7 @@ func Save(d Dir, c Config) error {
 
 // Server builds the kernel server configuration from the owner settings.
 func (c Config) Server(d Dir) config.Server {
-	return config.Server{Listen: ":" + strconv.Itoa(c.Port), CertFile: d.Cert(), KeyFile: d.Key(), ECHKeyFile: d.ECH(), InnerName: c.InnerName, InnerCertFile: d.Cert(), InnerKeyFile: d.Key(), Tokens: []string{c.Token}, OutboundIP: c.OutboundIP, BandwidthLimit: c.BandwidthLimit, MaxConnections: 1024}
+	return config.Server{Listen: ":" + strconv.Itoa(c.Port), CertFile: d.Cert(), KeyFile: d.Key(), ECHKeyFile: d.ECH(), InnerName: c.InnerName, InnerCertFile: d.Cert(), InnerKeyFile: d.Key(), Tokens: []string{c.Token}, Network: map[string]string{"ipv4": "tcp4", "ipv6": "tcp6"}[c.Inbound], OutboundIP: c.OutboundIP, BandwidthLimit: c.BandwidthLimit, MaxConnections: 1024}
 }
 
 func randomToken(n int) string {
