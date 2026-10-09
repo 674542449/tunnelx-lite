@@ -12,7 +12,7 @@ function log(text, kind = '') {
   while ($('log').childNodes.length > 300) $('log').firstChild.remove();
   $('log').scrollTop = $('log').scrollHeight;
 }
-function errText(e) { return String(e?.message || e || '操作失败'); }
+function errText(e) { const t = String(e?.message || e || '操作失败'); return /context canceled|context deadline exceeded/i.test(t) ? '已取消' : t; }
 const connected = () => status.connected === true || ['connected', 'degraded'].includes(status.connection_state);
 const connecting = () => status.connection_state === 'connecting';
 
@@ -172,12 +172,16 @@ $('probe-all').onclick = () => task('测试延迟', async () => {
   log('延迟测试完成：' + ok + ' / ' + servers.length + ' 个可用', 'ok');
 });
 $('connect').onclick = () => task(connected() ? '断开' : '连接', async () => {
-  if (connected()) { await bridge().Disconnect(); log('已断开，系统代理已恢复'); return; }
+  if (connected()) { const hadProxy = status.system_proxy === true; await bridge().Disconnect(); log(hadProxy ? '已断开，Windows 系统代理已恢复' : '已断开'); return; }
   await connectTo(selected);
 });
 $('cancel').onclick = () => bridge().CancelConnect().then(() => log('已取消连接'));
 $('mode').onchange = () => task('切换路由', async () => { await bridge().SaveProxyMode($('mode').value, (status.preferences?.direct_domains || []).join('\n')); log('路由已切换为 ' + $('mode').selectedOptions[0].text + '，下次连接生效'); });
-$('system-proxy').onchange = () => task('设置系统代理', async () => { await bridge().SavePreferences(status.preferences?.selected_id || selected, $('system-proxy').checked); log($('system-proxy').checked ? '连接时自动设置系统代理' : '连接时不修改系统代理（需要手动设置本地代理端口）'); });
+$('system-proxy').onchange = () => { const on = $('system-proxy').checked; task('设置系统代理', async () => {
+  await bridge().SetSystemProxy(on);
+  if (connected()) log(on ? '已开启 Windows 系统代理' : '已关闭 Windows 系统代理（本地端口 SOCKS ' + status.socks + ' / HTTP ' + status.http + ' 仍可手动使用）', 'ok');
+  else log(on ? '连接时会自动设置 Windows 系统代理' : '连接时不修改 Windows 系统代理');
+}); };
 $('open-settings').onclick = openSettings;
 $('open-logs').onclick = () => bridge().OpenLogs().catch(e => log(errText(e), 'err'));
 $('clear-log').onclick = () => $('log').replaceChildren();

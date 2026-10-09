@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	rt "github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/674542449/tunnelx-lite/internal/fsutil"
+	rt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type windowState struct {

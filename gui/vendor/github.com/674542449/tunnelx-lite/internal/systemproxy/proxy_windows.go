@@ -78,7 +78,7 @@ func (m *Manager) Enable() (err error) {
 	if e = k.SetStringValue("ProxyServer", m.Proxy); e != nil {
 		return e
 	}
-	if e = k.SetStringValue("ProxyOverride", "localhost;127.*;[::1]"); e != nil {
+	if e = k.SetStringValue("ProxyOverride", "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;192.168.*;169.254.*;<local>;[::1]"); e != nil {
 		return e
 	}
 	if e = k.DeleteValue("AutoConfigURL"); e != nil && e != registry.ErrNotExist {

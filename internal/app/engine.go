@@ -21,7 +21,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/tunmode"
 )
 
-const Version = "v0.1.1"
+const Version = "v0.1.2"
 
 type Settings struct {
 	SOCKS string `json:"socks_listen"`
@@ -226,3 +226,34 @@ func (e *Engine) ConnLogs() []ConnLog {
 }
 
 func (e *Engine) Close() error { return e.Disconnect() }
+
+// SetSystemProxy sets or clears the Windows system proxy immediately while a
+// non-TUN connection is up, and remembers the choice for future connections.
+func (e *Engine) SetSystemProxy(enabled bool) error {
+	if !e.lifecycle.TryLock() {
+		return errors.New("正在连接或断开，请稍后再试")
+	}
+	defer e.lifecycle.Unlock()
+	e.mu.Lock()
+	live := e.mux != nil && (e.proxy == nil || !e.proxy.TUN)
+	e.mu.Unlock()
+	if live {
+		var err error
+		if enabled {
+			if !e.system.Enabled() {
+				err = e.system.Enable()
+			}
+		} else {
+			err = e.system.Restore()
+		}
+		e.setProxyError(err)
+		if err != nil {
+			return err
+		}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	p := e.preferences
+	p.SystemProxy = enabled
+	return e.savePreferencesLocked(p)
+}

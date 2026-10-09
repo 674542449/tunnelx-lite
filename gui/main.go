@@ -71,14 +71,17 @@ func (a *App) CopyShareLink(id string) error {
 	}
 	return rt.ClipboardSetText(a.ctx, link)
 }
-func (a *App) Rename(id, name string) error                { return a.engine.Rename(id, name) }
-func (a *App) Remove(id string) error                      { return a.engine.Remove(id) }
-func (a *App) Connect(id string, proxy bool) error         { return a.engine.Connect(id, proxy) }
-func (a *App) Disconnect() error                           { return a.engine.Disconnect() }
-func (a *App) CancelConnect() error                        { return a.engine.CancelConnect() }
-func (a *App) Probe(id string) (int64, error)              { return a.engine.Probe(id) }
-func (a *App) ProbeAll() []app.ProbeResult                 { return a.engine.ProbeAll() }
-func (a *App) SavePreferences(id string, proxy bool) error { return a.engine.SavePreferences(id, proxy) }
+func (a *App) Rename(id, name string) error        { return a.engine.Rename(id, name) }
+func (a *App) Remove(id string) error              { return a.engine.Remove(id) }
+func (a *App) Connect(id string, proxy bool) error { return a.engine.Connect(id, proxy) }
+func (a *App) Disconnect() error                   { return a.engine.Disconnect() }
+func (a *App) CancelConnect() error                { return a.engine.CancelConnect() }
+func (a *App) Probe(id string) (int64, error)      { return a.engine.Probe(id) }
+func (a *App) ProbeAll() []app.ProbeResult         { return a.engine.ProbeAll() }
+func (a *App) SavePreferences(id string, proxy bool) error {
+	return a.engine.SavePreferences(id, proxy)
+}
+func (a *App) SetSystemProxy(enabled bool) error { return a.engine.SetSystemProxy(enabled) }
 func (a *App) SaveProxyMode(mode, exceptions string) error {
 	return a.engine.SaveProxyMode(mode, exceptions)
 }
@@ -120,7 +123,9 @@ func (a *App) SetTheme(theme string) error {
 }
 func (a *App) Minimize() { rt.WindowHide(a.ctx) }
 func (a *App) Quit() error {
-	if err := a.engine.Disconnect(); err != nil {
+	// A failed proxy restore after the tunnel is down must not trap the user:
+	// the saved state is kept and restored on the next start.
+	if err := a.engine.Disconnect(); err != nil && a.engine.Status()["connected"] == true {
 		return err
 	}
 	a.rememberWindow()

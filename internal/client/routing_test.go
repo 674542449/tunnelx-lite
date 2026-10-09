@@ -89,12 +89,13 @@ func TestBypassHTTPAndSOCKSReachOriginWithoutTunnel(t *testing.T) {
 	if tunneled.Load() != 0 {
 		t.Fatal("direct flow reached remote tunnel")
 	}
-	// Same target in global mode must reach the tunnel handler, not the origin.
+	// Global mode must send public targets to the tunnel handler. (Local
+	// addresses such as this loopback origin go direct; see local_route_test.go.)
 	global := NewProxy(m)
 	defer global.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	stream, _ := global.openTCP(ctx, target.Host)
+	stream, _ := global.openTCP(ctx, "203.0.113.10:80")
 	if stream != nil {
 		stream.Close()
 	}

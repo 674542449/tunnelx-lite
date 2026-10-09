@@ -18,7 +18,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/config"
 )
 
-const Version = "v0.1.1"
+const Version = "v0.1.2"
 
 type Config struct {
 	Name           string   `json:"name"`

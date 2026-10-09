@@ -13,6 +13,9 @@ func (p *Proxy) route(ctx context.Context, target string) routing.Decision {
 	d := routing.Decision{Address: target, Reason: "global_proxy"}
 	if p.Router != nil {
 		d = p.Router.Decide(ctx, target)
+	} else if localTarget(target) {
+		// The server refuses private targets, so LAN devices are only reachable directly.
+		d = routing.Decision{Address: target, Direct: true, Reason: "local_network"}
 	}
 	route := "proxy"
 	if d.Direct {
@@ -20,6 +23,17 @@ func (p *Proxy) route(ctx context.Context, target string) routing.Decision {
 	}
 	flowFrom(ctx).event("route_selected", map[string]any{"route": route, "rule": d.Reason})
 	return d
+}
+func localTarget(target string) bool {
+	host, _, err := net.SplitHostPort(target)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	a, err := netip.ParseAddr(host)
+	return err == nil && (a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsUnspecified())
 }
 func (p *Proxy) openTCP(ctx context.Context, target string) (*Tunnel, error) {
 	if p.TUN {
