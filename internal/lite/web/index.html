@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>txlite 面板</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="login" class="login" hidden>
+  <form id="login-form" class="card login-card">
+    <h1>txlite</h1>
+    <p class="muted">输入面板密码登录</p>
+    <input id="password" type="password" autocomplete="current-password" placeholder="面板密码" required>
+    <button type="submit" class="primary">登录</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</main>
+
+<div id="app" hidden>
+  <header class="topbar">
+    <div class="brand"><span class="dot" id="state-dot"></span><strong id="server-name">txlite</strong><span class="muted" id="version"></span></div>
+    <div class="top-actions">
+      <button id="restart" type="button">重启服务</button>
+      <button id="logout" type="button">退出</button>
+    </div>
+  </header>
+  <p id="notice" class="notice" role="status" hidden></p>
+
+  <section class="grid stats">
+    <div class="card stat"><span>运行时间</span><strong id="uptime">—</strong></div>
+    <div class="card stat"><span>当前连接</span><strong id="active">—</strong></div>
+    <div class="card stat"><span>上传 / 速率</span><strong id="up">—</strong><small id="up-rate"></small></div>
+    <div class="card stat"><span>下载 / 速率</span><strong id="down">—</strong><small id="down-rate"></small></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>分享链接</h2><span class="muted">粘贴到 txlite 客户端即可使用</span></div>
+    <div id="links"><p class="muted">正在探测服务器公网地址…</p></div>
+  </section>
+
+  <section class="grid two">
+    <div class="card">
+      <div class="card-head"><h2>系统</h2></div>
+      <dl id="system" class="kv"></dl>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>设置</h2></div>
+      <form id="settings" class="form">
+        <label>名称<input name="name" maxlength="48" required></label>
+        <label>代理端口<input name="port" type="number" min="1" max="65535" required></label>
+        <label>出站方式
+          <select name="outbound_ip">
+            <option value="">自动（按目标解析顺序）</option>
+            <option value="prefer_ipv4">IPv4 优先</option>
+            <option value="prefer_ipv6">IPv6 优先</option>
+            <option value="ipv4">仅 IPv4</option>
+            <option value="ipv6">仅 IPv6</option>
+          </select>
+        </label>
+        <label>限速 Mbps（0 表示不限）<input name="bandwidth_mbps" type="number" min="0" max="8589" step="any" required></label>
+        <label class="wide">自定义分享地址（每行一个 IP 或域名，留空则自动使用公网 IPv4 / IPv6）<textarea name="hosts" rows="2"></textarea></label>
+        <div class="wide actions"><button type="submit" class="primary">保存设置</button><span class="muted">修改端口、出站方式或限速后服务会自动重启</span></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="grid two">
+    <div class="card">
+      <div class="card-head"><h2>安全</h2></div>
+      <form id="password-form" class="form">
+        <label>当前密码<input name="current" type="password" autocomplete="current-password" required></label>
+        <label>新密码（8–128 位）<input name="new" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
+        <div class="wide actions"><button type="submit">修改面板密码</button></div>
+      </form>
+      <div class="danger-zone">
+        <button id="reset-token" type="button" class="danger">重置密钥</button>
+        <span class="muted">生成新密钥后，所有旧分享链接立即失效</span>
+      </div>
+      <div class="danger-zone">
+        <button id="reset-traffic" type="button">流量清零</button>
+        <span class="muted">只清空面板上的累计流量统计</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>运行日志</h2><button id="refresh-logs" type="button">刷新</button></div>
+      <pre id="logs" class="logs">—</pre>
+    </div>
+  </section>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

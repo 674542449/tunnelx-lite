@@ -1,0 +1,140 @@
+package lite
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"errors"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/674542449/tunnelx-lite/internal/config"
+	"github.com/674542449/tunnelx-lite/internal/server"
+)
+
+type traffic struct {
+	Uploaded   int64 `json:"uploaded"`
+	Downloaded int64 `json:"downloaded"`
+}
+
+// Runtime owns the running proxy and serves the owner panel.
+type Runtime struct {
+	Dir     Dir
+	Restart func() // replaced in tests; systemd restarts the process
+	mu      sync.Mutex
+	cfg     Config
+	id      Identity
+	srv     *server.Server
+	started time.Time
+	base    traffic // persisted totals minus what srv has counted in this run
+	logs    *ring
+	auth    sessions
+}
+
+func Open(d Dir) (*Runtime, error) {
+	c, e := Load(d)
+	if e != nil {
+		return nil, e
+	}
+	id, e := LoadIdentity(d)
+	if e != nil {
+		return nil, e
+	}
+	srv, e := server.New(c.Server(d))
+	if e != nil {
+		return nil, e
+	}
+	r := &Runtime{Dir: d, cfg: c, id: id, srv: srv, started: time.Now(), logs: newRing(300), auth: newSessions()}
+	r.Restart = func() { r.persist(); os.Exit(0) }
+	var t traffic
+	if config.Read(d.Traffic(), &t) == nil {
+		r.base = t
+	}
+	return r, nil
+}
+
+func (r *Runtime) Totals() traffic {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return traffic{r.base.Uploaded + r.srv.Uploaded.Load(), r.base.Downloaded + r.srv.Downloaded.Load()}
+}
+
+func (r *Runtime) persist() {
+	b, _ := json.Marshal(r.Totals())
+	if e := writeFile(r.Dir.Traffic(), b); e != nil {
+		log.Print("流量统计保存失败：", e)
+	}
+}
+
+func (r *Runtime) resetTraffic() {
+	r.mu.Lock()
+	r.base = traffic{-r.srv.Uploaded.Load(), -r.srv.Downloaded.Load()}
+	r.mu.Unlock()
+	r.persist()
+}
+
+// Run serves the proxy and the panel until ctx ends or either listener fails.
+func (r *Runtime) Run(ctx context.Context) error {
+	log.SetOutput(io.MultiWriter(os.Stderr, r.logs))
+	cert, e := tls.LoadX509KeyPair(r.Dir.Cert(), r.Dir.Key())
+	if e != nil {
+		return e
+	}
+	panel := &http.Server{Addr: ":" + strconv.Itoa(r.cfg.PanelPort), Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}, ErrorLog: log.New(io.Discard, "", 0)}
+	errs := make(chan error, 2)
+	go func() { errs <- r.srv.Serve(ctx) }()
+	go func() { errs <- panel.ListenAndServeTLS("", "") }()
+	log.Printf("txlite %s 已启动：代理端口 %d，面板端口 %d", Version, r.cfg.Port, r.cfg.PanelPort)
+	tick := time.NewTicker(30 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			panel.Close()
+			r.persist()
+			return nil
+		case e = <-errs:
+			panel.Close()
+			r.persist()
+			if e == nil || errors.Is(e, http.ErrServerClosed) {
+				e = errors.New("listener stopped")
+			}
+			return e
+		case <-tick.C:
+			r.persist()
+		}
+	}
+}
+
+// ring keeps the most recent log lines for the panel.
+type ring struct {
+	mu    sync.Mutex
+	lines []string
+	max   int
+}
+
+func newRing(n int) *ring { return &ring{max: n} }
+
+func (g *ring) Write(p []byte) (int, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, line := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
+		g.lines = append(g.lines, line)
+	}
+	if len(g.lines) > g.max {
+		g.lines = append([]string(nil), g.lines[len(g.lines)-g.max:]...)
+	}
+	return len(p), nil
+}
+
+func (g *ring) Lines() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.lines...)
+}

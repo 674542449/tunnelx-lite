@@ -1,0 +1,35 @@
+:root{--bg:#f5f4f0;--card:#fffefb;--text:#2b2924;--muted:#857e72;--line:#e7e2d8;--accent:#b8613f;--accent-soft:#f4e3da;--good:#3f8a5c;--bad:#b4493a;--warm:#9a6b23;--input:#fff;--mono:Consolas,"SFMono-Regular",Menlo,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#1b1a18;--card:#24221f;--text:#ece8e1;--muted:#a49c8f;--line:#38352f;--accent:#e08a66;--accent-soft:#3a2b24;--good:#6dbd8a;--bad:#e2786a;--warm:#d6a85a;--input:#1f1e1b}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+[hidden]{display:none!important}
+h1,h2{margin:0;font-weight:600}h1{font-size:28px}h2{font-size:15px}
+button{font:inherit;color:var(--text);background:transparent;border:1px solid var(--line);border-radius:8px;padding:7px 14px;cursor:pointer}
+button:hover{background:var(--accent-soft)}button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}button.primary:hover{filter:brightness(1.05)}
+button.danger{color:var(--bad);border-color:var(--bad)}
+input,select,textarea{font:inherit;color:var(--text);background:var(--input);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%}
+textarea{resize:vertical;font-family:var(--mono);font-size:12px}
+.muted{color:var(--muted);font-size:12px}.error{color:var(--bad);min-height:1.4em;margin:0}
+.login{min-height:100vh;display:grid;place-items:center;padding:16px}
+.login-card{width:min(360px,100%);display:grid;gap:12px;text-align:center}
+#app{max-width:1100px;margin:0 auto;padding:20px 16px 40px}
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;font-size:18px}.top-actions{display:flex;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--muted)}.dot.ok{background:var(--good)}.dot.bad{background:var(--bad)}
+.notice{margin:0 0 16px;padding:10px 14px;border-radius:8px;background:var(--accent-soft)}.notice.error{color:var(--bad)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}
+.card-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.grid{display:grid;gap:16px;margin-bottom:16px}.stats{grid-template-columns:repeat(4,minmax(0,1fr))}.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+section.card{margin-bottom:16px}
+.stat{display:grid;gap:4px}.stat span{color:var(--muted);font-size:12px}.stat strong{font-size:22px;font-variant-numeric:tabular-nums}.stat small{color:var(--muted);font-variant-numeric:tabular-nums}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:8px 16px;margin:0}.kv dt{color:var(--muted)}.kv dd{margin:0;overflow-wrap:anywhere}
+.form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.form label{display:grid;gap:6px;font-size:12px;color:var(--muted)}
+.wide{grid-column:1/-1}.actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.danger-zone{display:flex;align-items:center;gap:12px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);flex-wrap:wrap}
+.link{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 0;border-top:1px solid var(--line)}.link:first-child{border-top:0;padding-top:0}
+.link .tag{font-size:12px;padding:2px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.link code{font-family:var(--mono);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.link .buttons{display:flex;gap:6px}.qr{grid-column:1/-1;justify-self:center;background:#fff;padding:8px;border-radius:8px;max-width:260px;width:100%}
+.logs{margin:0;max-height:300px;overflow:auto;font:12px/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted)}
+@media (max-width:760px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.form{grid-template-columns:1fr}.link{grid-template-columns:1fr}.link .buttons{justify-content:flex-start}}
