@@ -95,28 +95,26 @@ func (m *Manager) Enable() (err error) {
 func (m *Manager) Restore() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.restore(false, false)
+	return m.restore(false)
 }
 
-// RestoreOrphan reserves the saved loopback endpoint before restoring it. A
-// different live client can therefore keep its proxy even during our startup
-// or shutdown, before this process has established a tunnel of its own.
+// RestoreOrphan reserves the saved loopback endpoint before restoring it, so a
+// different live txlite instance keeps its proxy during our startup.
 func (m *Manager) RestoreOrphan() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.restore(true, false)
+	return m.restore(true)
 }
 
-// RecoverOrphan is the user-confirmed recovery. When another program has
-// since replaced the proxy, its settings stay untouched and only our stale
-// snapshot is dropped, so recovery can never be blocked permanently.
-func (m *Manager) RecoverOrphan() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.restore(true, true)
-}
+// RecoverOrphan is the explicit recovery from the settings page; it behaves
+// like RestoreOrphan and never blocks.
+func (m *Manager) RecoverOrphan() error { return m.RestoreOrphan() }
 
-func (m *Manager) restore(orphanOnly, keepExternal bool) error {
+// restore puts back the settings saved by Enable. When another program has
+// replaced the system proxy since, that program owns it now: its settings are
+// left untouched and only our stale snapshot is dropped, so other proxy tools
+// are never overwritten and connecting is never blocked.
+func (m *Manager) restore(orphanOnly bool) error {
 	b, e := os.ReadFile(m.Path)
 	if os.IsNotExist(e) {
 		return nil
@@ -126,19 +124,8 @@ func (m *Manager) restore(orphanOnly, keepExternal bool) error {
 	}
 	var s Snapshot
 	if e = json.Unmarshal(b, &s); e != nil {
-		return e
-	}
-	if orphanOnly {
-		host, port, err := net.SplitHostPort(s.OurProxy)
-		p, portErr := strconv.Atoi(port)
-		if err != nil || portErr != nil || p < 1 || p > 65535 || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
-			return errors.New("保存的代理地址无效，请检查系统代理恢复文件")
-		}
-		listener, err := net.Listen("tcp", s.OurProxy)
-		if err != nil {
-			return errors.New("另一个程序仍在使用代理端口，已保留系统代理；请先退出该程序后重试恢复")
-		}
-		defer listener.Close()
+		// An unreadable snapshot cannot be restored; keeping it would block every connect.
+		return os.Remove(m.Path)
 	}
 	k, e := registry.OpenKey(registry.CURRENT_USER, m.keyPath(), registry.QUERY_VALUE|registry.SET_VALUE)
 	if e != nil {
@@ -146,11 +133,20 @@ func (m *Manager) restore(orphanOnly, keepExternal bool) error {
 	}
 	defer k.Close()
 	current, _, e := k.GetStringValue("ProxyServer")
-	if e == nil && current != s.OurProxy {
-		if keepExternal {
+	if e != nil || current != s.OurProxy {
+		return os.Remove(m.Path)
+	}
+	if orphanOnly {
+		host, port, err := net.SplitHostPort(s.OurProxy)
+		p, portErr := strconv.Atoi(port)
+		if err != nil || portErr != nil || p < 1 || p > 65535 || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 			return os.Remove(m.Path)
 		}
-		return errors.New("系统代理已被其他程序修改，为避免覆盖其设置已暂停自动恢复；请在设置中点击「恢复系统代理」确认")
+		listener, err := net.Listen("tcp", s.OurProxy)
+		if err != nil {
+			return errors.New("本地代理端口 " + s.OurProxy + " 正被其他程序占用，请先退出占用它的程序再连接")
+		}
+		defer listener.Close()
 	}
 	if e = restoreValues(k, s); e != nil {
 		return e

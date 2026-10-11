@@ -68,3 +68,44 @@ func TestSystemProxySwitchAppliesWhileConnected(t *testing.T) {
 		t.Fatal("disconnect did not restore the original proxy", err, proxyServer())
 	}
 }
+
+func TestAnotherProxyToolNeverBlocksConnect(t *testing.T) {
+	keyPath := fmt.Sprintf(`Software\txlite-tests\%d`, time.Now().UnixNano())
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, keyPath, registry.ALL_ACCESS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer registry.DeleteKey(registry.CURRENT_USER, keyPath)
+	defer k.Close()
+	k.SetStringValue("ProxyServer", "old.example:3128")
+	proxyServer := func() string { v, _, _ := k.GetStringValue("ProxyServer"); return v }
+	link := testServer(t, "127.0.0.1:9")
+	e, err := New(t.TempDir(), Settings{SOCKS: freeAddr(t), HTTP: freeAddr(t), Web: freeAddr(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	e.system.KeyPath = keyPath
+	e.Import(link.String())
+	id := e.Servers()[0].ID
+	e.SaveProxyMode(routing.Global, "")
+	if err = e.Connect(id, true); err != nil || proxyServer() != e.Settings().HTTP {
+		t.Fatal("system proxy not set", err)
+	}
+	k.SetStringValue("ProxyServer", "127.0.0.1:10809") // another proxy tool takes over
+	if err = e.Disconnect(); err != nil {
+		t.Fatal("disconnect reported an error for another tool's proxy", err)
+	}
+	if proxyServer() != "127.0.0.1:10809" {
+		t.Fatal("disconnect overwrote the other tool's proxy", proxyServer())
+	}
+	if err = e.Connect(id, true); err != nil {
+		t.Fatal("connect blocked after another tool changed the system proxy", err)
+	}
+	if err = e.Disconnect(); err != nil || proxyServer() != "127.0.0.1:10809" {
+		t.Fatal("the other tool's proxy was not handed back", err, proxyServer())
+	}
+	if st := e.Status(); st["proxy_recovery_error"] != "" {
+		t.Fatal("a stale recovery warning is still shown", st["proxy_recovery_error"])
+	}
+}
