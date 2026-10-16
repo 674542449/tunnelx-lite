@@ -54,8 +54,8 @@ func QUICStatus(code byte) int {
 var QUICConfig = func() *quic.Config {
 	return &quic.Config{
 		HandshakeIdleTimeout:           5 * time.Second,
-		MaxIdleTimeout:                 45 * time.Second,
-		KeepAlivePeriod:                15 * time.Second,
+		MaxIdleTimeout:                 30 * time.Second,
+		KeepAlivePeriod:                10 * time.Second,
 		MaxIncomingStreams:             1024,
 		MaxIncomingUniStreams:          -1,
 		InitialStreamReceiveWindow:     1 << 20,

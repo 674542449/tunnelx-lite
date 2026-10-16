@@ -127,6 +127,7 @@ function openSettings() {
   const transportNote = el('p', '自动：优先用 QUIC（UDP，丢包时网页更快），UDP 被封或不通时自动改用 TCP。服务器需要放行与代理端口同号的 UDP 端口。', 'note');
   const bandwidth = el('input'); bandwidth.type = 'number'; bandwidth.min = 0; bandwidth.max = 1000; bandwidth.step = 1; bandwidth.value = pref.down_mbps || 0;
   const bandwidthNote = el('p', '填你宽带实际的下载速度（测速结果），QUIC 会按这个速度发送、丢包时不降速，线路差时 YouTube 和下载明显更快。不要填得比实际高，否则反而更卡。填 0 为自动。', 'note');
+  if (connected() || connecting()) { for (const c of [domains, transport, bandwidth]) { c.disabled = true; c.title = '断开连接后才能修改'; } }
   const ruleInfo = el('p', '分流规则：' + Number(rules.domains || 0).toLocaleString() + ' 条域名 · ' + Number(rules.ip_prefixes || 0).toLocaleString() + ' 段 IP · ' + (rules.source === 'updated' ? '更新于 ' + new Date(rules.updated_at * 1000).toLocaleString('zh-CN') : '随版本内置') + '。来源：MetaCubeX meta-rules-dat（与 Clash Verge Rev 相同的 geosite / geoip）', 'note');
   const update = el('button', '更新分流规则'), recover = el('button', '恢复系统代理'), diag = el('button', '导出诊断报告');
   for (const b of [update, recover, diag]) b.type = 'button';
@@ -138,19 +139,19 @@ function openSettings() {
   const data = el('p', '数据目录：' + (status.data_directory || '—') + '　版本：' + (status.version || ''), 'note');
   dialog('设置', [field('绕过大陆模式下的直连例外', domains), field('传输方式', transport), transportNote, field('下载带宽（Mbps，0 为自动）', bandwidth), bandwidthNote, field('界面主题', theme), ruleInfo, actions, ports, data], async () => {
     applyTheme(theme.value);
+    const mbps = Math.max(0, Math.min(1000, Math.round(Number(bandwidth.value) || 0)));
+    const changed = domains.value.trim() !== (pref.direct_domains || []).join('\n') || transport.value !== (status.transport_preference || 'auto') || mbps !== (pref.down_mbps || 0);
+    if (connected() || connecting()) { if (changed) throw Error('请先断开连接再修改直连例外、传输方式或下载带宽'); return; }
+    // Domains are validated by the engine; save them first so a typo leaves nothing half-saved.
+    await bridge().SaveProxyMode(pref.proxy_mode || 'bypass_cn', domains.value);
     if (transport.value !== (status.transport_preference || 'auto')) {
-      if (connected() || connecting()) throw Error('请先断开连接再修改传输方式');
       await bridge().SaveTransport(transport.value);
       log('传输方式已改为 ' + transportNames[transport.value] + '，下次连接生效', 'ok');
     }
-    const mbps = Math.max(0, Math.min(1000, Math.round(Number(bandwidth.value) || 0)));
     if (mbps !== (pref.down_mbps || 0)) {
-      if (connected() || connecting()) throw Error('请先断开连接再修改下载带宽');
       await bridge().SaveBandwidth(mbps);
       log(mbps ? '下载带宽已设为 ' + mbps + ' Mbps（QUIC 固定速率），下次连接生效' : '下载带宽已改为自动', 'ok');
     }
-    if (connected() || connecting()) { if (domains.value.trim() !== (pref.direct_domains || []).join('\n')) throw Error('请先断开连接再修改直连例外'); return; }
-    await bridge().SaveProxyMode(pref.proxy_mode || 'bypass_cn', domains.value);
     log('设置已保存', 'ok'); await refresh();
   }, '保存');
 }

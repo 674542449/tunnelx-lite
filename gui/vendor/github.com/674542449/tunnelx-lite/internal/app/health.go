@@ -224,7 +224,9 @@ func (e *Engine) DiagnosticsReport() (string, error) {
 	health.DNS.ErrorKind = safeHealthKind(health.DNS.ErrorKind)
 	health.Egress.ErrorKind = safeHealthKind(health.Egress.ErrorKind)
 	report := map[string]any{"report_version": 1, "client_version": Version, "platform": runtime.GOOS, "generated_at": time.Now().UTC().Format(time.RFC3339), "transport": "h2", "connection_state": s["connection_state"], "connection_stage": safeStage(s["connection_stage"].(string)), "health": health, "health_scope": "gateway_tls_ech_only", "system_proxy_saved": s["system_proxy"], "redaction": "Keys, server addresses, paths and browsing history are excluded."}
-	for _, key := range []string{"upload", "download", "active", "h2_streams", "connected_at", "ech"} {
+	report["transport_preference"] = s["transport_preference"]
+	report["down_mbps"] = s["preferences"].(Preferences).DownMbps
+	for _, key := range []string{"upload", "download", "active", "h2_streams", "connected_at", "ech", "transport"} {
 		if v, ok := s[key]; ok {
 			report[key] = v
 		}

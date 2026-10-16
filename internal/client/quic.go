@@ -23,6 +23,9 @@ type quicState struct {
 	failures int
 	retryAt  time.Time
 	dialLock sync.Mutex // serializes synchronous dials in forced QUIC mode
+	// noControl is set once a server closed the connection on the control
+	// stream: servers before v0.2.1 do not know it, so never send it again.
+	noControl bool
 }
 
 var errQUICOnly = errors.New("QUIC 连接不可用：请确认服务器已开启 QUIC 并在防火墙 / 安全组放行 UDP 端口，或改用自动 / TCP 传输")
@@ -116,10 +119,20 @@ func (m *Mux) dialQUIC(ctx context.Context) (*quic.Conn, error) {
 	}
 	q.failures, q.conn = 0, c
 	m.event(ctx, "carrier_opened", map[string]any{"transport": "quic", "ech_accepted": c.ConnectionState().TLS.ECHAccepted})
-	if settings := m.congestionSettings(); settings != "" {
+	if settings := m.congestionSettings(); settings != "" && !q.noControl {
 		go func() {
-			if t, e := m.openQUIC(context.Background(), c, wire.QUICControl, settings, true); e == nil {
+			t, e := m.openQUIC(context.Background(), c, wire.QUICControl, settings, true)
+			if e == nil {
 				t.Close()
+				return
+			}
+			select {
+			case <-c.Context().Done():
+				q.mu.Lock()
+				q.noControl = true
+				q.retryAt = time.Time{}
+				q.mu.Unlock()
+			case <-time.After(time.Second):
 			}
 		}()
 	}
@@ -225,7 +238,10 @@ func (m *Mux) openQUIC(ctx context.Context, c *quic.Conn, kind byte, target stri
 			m.event(ctx, "open_attempt_failed", fields)
 			st.CancelRead(0)
 			st.CancelWrite(0)
-			if c.Context().Err() != nil {
+			// No answer in time on a live-looking connection means UDP stopped
+			// getting through: stop sending new flows into it.
+			var timeout net.Error
+			if c.Context().Err() != nil || errors.As(e, &timeout) && timeout.Timeout() {
 				m.dropQUIC(c)
 			}
 			body.resolve(nil, e)
