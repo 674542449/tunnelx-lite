@@ -21,7 +21,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/tunmode"
 )
 
-const Version = "v0.2.0"
+const Version = "v0.2.1"
 
 type Settings struct {
 	SOCKS string `json:"socks_listen"`
@@ -34,6 +34,9 @@ type Preferences struct {
 	ProxyMode     string   `json:"proxy_mode"`
 	DirectDomains []string `json:"direct_domains"`
 	Transport     string   `json:"transport,omitempty"` // "auto" (default), "quic" or "h2"
+	// DownMbps is the user's real download bandwidth. Set, the server sends
+	// over QUIC at that rate without backing off on loss (Brutal); 0 keeps BBR.
+	DownMbps int `json:"down_mbps,omitempty"`
 }
 
 // ValidTransport accepts the transport choices offered in settings.
@@ -128,7 +131,7 @@ func New(root string, settings Settings) (*Engine, error) {
 	}
 	if b, err := os.ReadFile(e.statePath("preferences.json")); err == nil {
 		p := e.preferences
-		if json.Unmarshal(b, &p) == nil && routing.ValidMode(p.ProxyMode) && ValidTransport(p.Transport) {
+		if json.Unmarshal(b, &p) == nil && routing.ValidMode(p.ProxyMode) && ValidTransport(p.Transport) && p.DownMbps >= 0 && p.DownMbps <= 1000 {
 			e.preferences = p
 		} else {
 			e.startupWarning += " 本机偏好无法读取，已使用默认设置。"
@@ -238,6 +241,22 @@ func (e *Engine) ConnLogs() []ConnLog {
 }
 
 func (e *Engine) Close() error { return e.Disconnect() }
+
+// SaveBandwidth stores the download bandwidth for QUIC (0 = automatic BBR);
+// it applies to the next connection.
+func (e *Engine) SaveBandwidth(mbps int) error {
+	if mbps < 0 || mbps > 1000 {
+		return errors.New("下载带宽需在 0（自动）到 1000 Mbps 之间")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.mux != nil || e.connecting || e.recovering || e.stopping > 0 {
+		return errors.New("请先断开连接，再修改下载带宽")
+	}
+	p := e.preferences
+	p.DownMbps = mbps
+	return e.savePreferencesLocked(p)
+}
 
 // SaveTransport chooses how the client reaches the server; it applies to the
 // next connection.

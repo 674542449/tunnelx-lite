@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -115,6 +116,13 @@ func (m *Mux) dialQUIC(ctx context.Context) (*quic.Conn, error) {
 	}
 	q.failures, q.conn = 0, c
 	m.event(ctx, "carrier_opened", map[string]any{"transport": "quic", "ech_accepted": c.ConnectionState().TLS.ECHAccepted})
+	if settings := m.congestionSettings(); settings != "" {
+		go func() {
+			if t, e := m.openQUIC(context.Background(), c, wire.QUICControl, settings, true); e == nil {
+				t.Close()
+			}
+		}()
+	}
 	return c, nil
 }
 
@@ -254,4 +262,17 @@ func (m *Mux) openOverQUIC(ctx context.Context, kind byte, target string, wait b
 		return nil, false, nil
 	}
 	return t, true, err
+}
+
+// congestionSettings is the control message for the server, or "" for its default.
+func (m *Mux) congestionSettings() string {
+	switch m.Config.QUICCongestion {
+	case "bbr-aggressive":
+		return "cc=bbr-aggressive"
+	case "brutal":
+		if m.Config.DownMbps > 0 {
+			return "cc=brutal;rx=" + strconv.Itoa(m.Config.DownMbps*125000)
+		}
+	}
+	return ""
 }

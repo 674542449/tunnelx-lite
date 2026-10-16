@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/674542449/tunnelx-lite/internal/congestion"
+	"github.com/674542449/tunnelx-lite/internal/congestion/bbr"
 	"github.com/674542449/tunnelx-lite/internal/wire"
 	"github.com/apernet/quic-go"
 )
@@ -82,6 +84,14 @@ func (s *Server) quicStream(conn *quic.Conn, st *quic.Stream, authed *atomic.Boo
 	authed.Store(true)
 	st.SetReadDeadline(time.Time{})
 	answer := func(code byte) bool { _, e := st.Write([]byte{code}); return e == nil }
+	if kind == wire.QUICControl {
+		if applyCongestion(conn, target) {
+			answer(wire.QUICOK)
+		} else {
+			answer(wire.QUICBadRequest)
+		}
+		return
+	}
 	select {
 	case s.slots <- struct{}{}:
 		defer func() { <-s.slots }()
@@ -217,4 +227,38 @@ func (s *Server) quicUDP(ctx context.Context, st *quic.Stream, ip net.IP, port i
 		}
 		s.Downloaded.Add(int64(n))
 	}
+}
+
+// parseCongestion reads "cc=<mode>[;rx=<bytes per second>]". Brutal needs the
+// client's download bandwidth: 1 to 1000 Mbit/s.
+func parseCongestion(settings string) (mode string, rx uint64, ok bool) {
+	values := map[string]string{}
+	for _, kv := range strings.Split(settings, ";") {
+		if k, v, found := strings.Cut(kv, "="); found {
+			values[k] = v
+		}
+	}
+	switch mode = values["cc"]; mode {
+	case "bbr", "bbr-aggressive":
+		return mode, 0, true
+	case "brutal":
+		rx, e := strconv.ParseUint(values["rx"], 10, 64)
+		return mode, rx, e == nil && rx >= 125_000 && rx <= 125_000_000
+	}
+	return "", 0, false
+}
+
+// applyCongestion switches how this connection sends towards the client.
+func applyCongestion(conn *quic.Conn, settings string) bool {
+	mode, rx, ok := parseCongestion(settings)
+	switch {
+	case !ok:
+	case mode == "bbr":
+		congestion.UseBBR(conn)
+	case mode == "bbr-aggressive":
+		congestion.UseBBRProfile(conn, bbr.ProfileAggressive)
+	case mode == "brutal":
+		congestion.UseBrutal(conn, rx)
+	}
+	return ok
 }

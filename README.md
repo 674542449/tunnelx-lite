@@ -70,6 +70,7 @@ INBOUND=ipv6 OUTBOUND=ipv6 bash <(curl -fsSL https://raw.githubusercontent.com/6
 - TUN 模式接管所有应用的 TCP / UDP，需要右键「以管理员身份运行」。
 - 不认系统代理的程序，可手动把它的代理设为 SOCKS5 `127.0.0.1:1080` 或 HTTP `127.0.0.1:8088`。
 - 右键服务器：测试延迟、复制分享链接、重命名、删除。
+- 设置里可以填写「下载带宽」：填宽带实际的下载速度（测速结果）后，服务器经 QUIC 按这个速度发送、丢包时不降速（Hysteria2 同款 Brutal），晚高峰线路差时 YouTube 和下载明显更快；不要填得比实际高。填 0 为自动（BBR）。
 - 设置里可以选择传输方式（自动 / 仅 QUIC / 仅 TCP）、填写直连例外域名、更新分流规则、恢复系统代理、导出脱敏诊断报告。底部状态栏显示当前实际使用的传输方式。
 - 导入的服务器（含密钥）用 Windows DPAPI 加密保存在 `%LOCALAPPDATA%\txlite`。在程序目录新建 `portable` 文件夹即可改为便携模式。
 
@@ -98,4 +99,4 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags=http2legacy -trimpath -ldfl
 
 ## 第三方组件
 
-客户端 TUN 模式使用 [tun2socks](https://github.com/xjasonlyu/tun2socks)（MIT）和 [Wintun](https://www.wintun.net/)，许可证与源码说明在 `gui/runtime`。QUIC 使用 [apernet/quic-go](https://github.com/apernet/quic-go)（quic-go 的分支，支持替换拥塞控制，MIT），BBR 拥塞控制复制自 [Hysteria](https://github.com/apernet/hysteria)（MIT，许可证在 `internal/congestion`）。分流规则使用 [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)（与 Clash Verge Rev 相同的 geosite / geoip 数据，GPL-3.0），许可证在 `internal/routing/data`。
+客户端 TUN 模式使用 [tun2socks](https://github.com/xjasonlyu/tun2socks)（MIT）和 [Wintun](https://www.wintun.net/)，许可证与源码说明在 `gui/runtime`。QUIC 使用 [apernet/quic-go](https://github.com/apernet/quic-go)（quic-go 的分支，支持替换拥塞控制，MIT），BBR 与 Brutal 拥塞控制复制自 [Hysteria](https://github.com/apernet/hysteria)（MIT，许可证在 `internal/congestion`）。分流规则使用 [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)（与 Clash Verge Rev 相同的 geosite / geoip 数据，GPL-3.0），许可证在 `internal/routing/data`。

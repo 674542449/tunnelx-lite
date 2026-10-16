@@ -221,3 +221,30 @@ func TestAutoUpgradesToQUIC(t *testing.T) {
 		t.Fatal("flow did not use QUIC", tun.Transport())
 	}
 }
+
+// A client that declares its bandwidth switches the server to Brutal; flows
+// keep working and a refused setting does not break the connection.
+func TestQUICBrutalControl(t *testing.T) {
+	echo := echoTCP(t)
+	link := quicServer(t, true, echo)
+	for _, mbps := range []int{50, 5000} {
+		c := link.Client("127.0.0.1")
+		c.Transport, c.ConnectTimeout, c.QUICCongestion, c.DownMbps = "quic", 3, "brutal", mbps
+		m, e := New(c)
+		if e != nil {
+			t.Fatal(e)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		tun, e := m.OpenTCP(ctx, echo)
+		if e != nil {
+			t.Fatal(mbps, e)
+		}
+		roundTrip(t, tun, "brutal")
+		tun.Close()
+		cancel()
+		if m.congestionSettings() == "" {
+			t.Fatal("bandwidth not sent")
+		}
+		m.Close()
+	}
+}

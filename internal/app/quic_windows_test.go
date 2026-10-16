@@ -105,3 +105,28 @@ func TestQUICTransportPreference(t *testing.T) {
 		e.Close()
 	}
 }
+
+func TestBandwidthPreferenceSelectsBrutal(t *testing.T) {
+	e, err := New(t.TempDir(), Settings{SOCKS: freeAddr(t), HTTP: freeAddr(t), Web: freeAddr(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	for _, bad := range []int{-1, 1001} {
+		if e.SaveBandwidth(bad) == nil {
+			t.Fatal("accepted", bad)
+		}
+	}
+	link := share.Link{Name: "b", Host: "127.0.0.1", Port: 1, Token: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", ServerName: "x.invalid"}
+	c, _ := e.clientConfig(context.Background(), link)
+	if c.QUICCongestion != "" {
+		t.Fatal("BBR default changed")
+	}
+	if err = e.SaveBandwidth(100); err != nil {
+		t.Fatal(err)
+	}
+	c, _ = e.clientConfig(context.Background(), link)
+	if c.QUICCongestion != "brutal" || c.DownMbps != 100 || e.Status()["preferences"].(Preferences).DownMbps != 100 {
+		t.Fatal("bandwidth not applied", c.QUICCongestion, c.DownMbps)
+	}
+}

@@ -21,6 +21,9 @@ const (
 	QUICVersion = 1
 	QUICTCP     = 1
 	QUICUDP     = 2
+	// QUICControl carries "cc=<mode>;rx=<bytes per second>" instead of a
+	// target: how the server should send towards this client.
+	QUICControl = 3
 
 	QUICOK         = 0
 	QUICBadRequest = 1
@@ -48,7 +51,7 @@ func QUICStatus(code byte) int {
 }
 
 // QUICConfig is shared by client and server so both sides agree on limits.
-func QUICConfig() *quic.Config {
+var QUICConfig = func() *quic.Config {
 	return &quic.Config{
 		HandshakeIdleTimeout:           5 * time.Second,
 		MaxIdleTimeout:                 45 * time.Second,
@@ -79,7 +82,7 @@ func ReadQUICHeader(r io.Reader) (kind byte, token, target string, err error) {
 	if _, err = io.ReadFull(r, head); err != nil {
 		return
 	}
-	if head[0] != QUICVersion || (head[1] != QUICTCP && head[1] != QUICUDP) || head[2] == 0 {
+	if head[0] != QUICVersion || head[1] < QUICTCP || head[1] > QUICControl || head[2] == 0 {
 		return 0, "", "", errors.New("bad header")
 	}
 	b := make([]byte, int(head[2])+1)

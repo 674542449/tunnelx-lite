@@ -41,6 +41,10 @@ type Client struct {
 	H2MaxAge       int    `json:"h2_max_age_seconds,omitempty"`
 	H2RetryNew     bool   `json:"h2_retry_new_connection,omitempty"`
 	DeviceID       string `json:"device_id,omitempty"`
+	// QUICCongestion is how the server sends towards this client over QUIC:
+	// "" or "bbr", "bbr-aggressive", or "brutal" at DownMbps.
+	QUICCongestion string `json:"quic_congestion,omitempty"`
+	DownMbps       int    `json:"down_mbps,omitempty"`
 }
 type Server struct {
 	ManagedOnly           bool                `json:"managed_only,omitempty"`

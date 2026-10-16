@@ -12,6 +12,7 @@ github.com/674542449/tunnelx-lite/internal/client
 github.com/674542449/tunnelx-lite/internal/config
 github.com/674542449/tunnelx-lite/internal/congestion
 github.com/674542449/tunnelx-lite/internal/congestion/bbr
+github.com/674542449/tunnelx-lite/internal/congestion/brutal
 github.com/674542449/tunnelx-lite/internal/congestion/common
 github.com/674542449/tunnelx-lite/internal/diagnostics
 github.com/674542449/tunnelx-lite/internal/fsutil

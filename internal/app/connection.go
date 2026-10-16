@@ -109,6 +109,9 @@ func (e *Engine) clientConfig(ctx context.Context, link share.Link) (config.Clie
 	c := link.Client(ip)
 	c.SOCKSListen, c.HTTPListen, c.WebListen, c.DeviceID = e.settings.SOCKS, e.settings.HTTP, e.settings.Web, e.deviceID
 	c.Transport = e.preferences.transport()
+	if e.preferences.DownMbps > 0 {
+		c.QUICCongestion, c.DownMbps = "brutal", e.preferences.DownMbps
+	}
 	e.mu.Unlock()
 	return c, nil
 }

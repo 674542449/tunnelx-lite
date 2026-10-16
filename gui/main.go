@@ -87,6 +87,7 @@ func (a *App) SaveProxyMode(mode, exceptions string) error {
 }
 func (a *App) UpdateRoutingRules() error    { return a.engine.UpdateRoutingRules() }
 func (a *App) SaveTransport(t string) error { return a.engine.SaveTransport(t) }
+func (a *App) SaveBandwidth(mbps int) error { return a.engine.SaveBandwidth(mbps) }
 func (a *App) RecoverProxy() error          { return a.engine.RecoverProxy() }
 func (a *App) ConnLogs() []app.ConnLog      { return a.engine.ConnLogs() }
 func (a *App) OpenLogs() error {
