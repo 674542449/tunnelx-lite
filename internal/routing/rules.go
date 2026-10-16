@@ -25,11 +25,44 @@ const TUN = "tun"
 //go:embed data/*
 var data embed.FS
 
+// Rules follow MetaCubeX meta-rules-dat (the geosite/geoip data shipped with
+// Clash Verge Rev). The receiver holds geosite:cn + geoip:cn; private holds
+// geosite:private + geoip:private; proxy holds geosite:geolocation-!cn.
 type Rules struct {
 	suffix, exact map[string]bool
 	patterns      []*regexp.Regexp
 	prefixes      map[netip.Prefix]bool
 	proxy         *Rules
+	private       *Rules
+}
+
+// ParseList reads Clash domain lists: "+.example.com" (domain and subdomains),
+// ".example.com" / "*.example.com" (treated as subdomains too) and
+// "example.com" (exact). Addresses are CIDR prefixes.
+func ParseList(domains, addresses []byte) (*Rules, error) {
+	var converted strings.Builder
+	s := bufio.NewScanner(strings.NewReader(string(domains)))
+	s.Buffer(make([]byte, 64<<10), 1<<20)
+	for s.Scan() {
+		v := strings.TrimSpace(s.Text())
+		switch {
+		case v == "" || strings.HasPrefix(v, "#"):
+			continue
+		case strings.HasPrefix(v, "+."):
+			converted.WriteString("domain:" + v[2:])
+		case strings.HasPrefix(v, "*."):
+			converted.WriteString("domain:" + v[2:])
+		case strings.HasPrefix(v, "."):
+			converted.WriteString("domain:" + v[1:])
+		default:
+			converted.WriteString("full:" + v)
+		}
+		converted.WriteByte('\n')
+	}
+	if e := s.Err(); e != nil {
+		return nil, e
+	}
+	return Parse([]byte(converted.String()), addresses)
 }
 
 func ValidMode(s string) bool { return s == Bypass || s == Global || s == TUN }
@@ -103,6 +136,9 @@ func Parse(domains, addresses []byte) (*Rules, error) {
 	return r, s.Err()
 }
 func (r *Rules) MatchDomain(s string) bool {
+	if r == nil {
+		return false
+	}
 	d, e := Domain(s)
 	if e != nil {
 		return false
@@ -128,6 +164,9 @@ func (r *Rules) MatchDomain(s string) bool {
 	return false
 }
 func (r *Rules) MatchIP(a netip.Addr) bool {
+	if r == nil {
+		return false
+	}
 	a = a.Unmap()
 	for bits := a.BitLen(); bits > 0; bits-- {
 		if r.prefixes[netip.PrefixFrom(a, bits).Masked()] {
@@ -143,21 +182,33 @@ var builtErr error
 
 func Builtin() (*Rules, error) {
 	builtOnce.Do(func() {
-		d, _ := data.ReadFile("data/direct-list.txt")
-		v4, _ := data.ReadFile("data/china.txt")
-		v6, _ := data.ReadFile("data/china6.txt")
-		built, builtErr = Parse(d, append(append(v4, '\n'), v6...))
-		if builtErr != nil {
-			return
+		files := map[string][]byte{}
+		for _, name := range ruleFiles {
+			files[name], _ = data.ReadFile("data/" + name)
 		}
-		if len(built.suffix) < 1000 || len(built.prefixes) < 1000 {
-			builtErr = errors.New("bundled routing rules incomplete")
-			return
-		}
-		p, _ := data.ReadFile("data/proxy-list.txt")
-		built.proxy, builtErr = Parse(p, nil)
+		built, builtErr = assemble(files)
 	})
 	return built, builtErr
+}
+
+// ruleFiles are the meta-rules-dat lists, bundled under data/ and downloaded by Download.
+var ruleFiles = []string{"geosite-cn.list", "geosite-geolocation-not-cn.list", "geosite-private.list", "geoip-cn.list", "geoip-private.list"}
+
+func assemble(files map[string][]byte) (*Rules, error) {
+	r, e := ParseList(files["geosite-cn.list"], files["geoip-cn.list"])
+	if e != nil {
+		return nil, e
+	}
+	if r.private, e = ParseList(files["geosite-private.list"], files["geoip-private.list"]); e != nil {
+		return nil, e
+	}
+	if r.proxy, e = ParseList(files["geosite-geolocation-not-cn.list"], nil); e != nil {
+		return nil, e
+	}
+	if len(r.suffix) < 1000 || len(r.prefixes) < 1000 || len(r.proxy.suffix)+len(r.proxy.exact) < 100 || len(r.private.prefixes) < 5 {
+		return nil, errors.New("规则数量异常，保留原有规则")
+	}
+	return r, nil
 }
 func Metadata() any {
 	b, _ := data.ReadFile("data/manifest.json")
@@ -234,7 +285,7 @@ func (r *Router) Decide(ctx context.Context, target string) Decision {
 		return proxy
 	}
 	if a, e := netip.ParseAddr(host); e == nil {
-		if local(a) || r.Exceptions.MatchIP(a) || r.Rules.MatchIP(a) {
+		if local(a) || r.Exceptions.MatchIP(a) || r.Rules.private.MatchIP(a) || r.Rules.MatchIP(a) {
 			return Decision{true, target, "ip_direct"}
 		}
 		return proxy
@@ -243,11 +294,16 @@ func (r *Router) Decide(ctx context.Context, target string) Decision {
 	if e != nil {
 		return proxy
 	}
-	if host == "localhost" || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".lan") || strings.HasSuffix(host, ".home.arpa") || r.Exceptions.MatchDomain(host) || r.Rules.MatchDomain(host) {
+	// Clash order: exceptions, GEOSITE private, GEOSITE geolocation-!cn (proxy),
+	// GEOSITE cn, then GEOIP private/CN after resolving, otherwise proxy.
+	if host == "localhost" || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".lan") || strings.HasSuffix(host, ".home.arpa") || r.Exceptions.MatchDomain(host) || r.Rules.private.MatchDomain(host) {
 		return Decision{true, target, "domain_direct"}
 	}
-	if r.Rules.proxy != nil && r.Rules.proxy.MatchDomain(host) {
+	if r.Rules.proxy.MatchDomain(host) {
 		return proxy
+	}
+	if r.Rules.MatchDomain(host) {
+		return Decision{true, target, "domain_direct"}
 	}
 	r.mu.Lock()
 	c, ok := r.cache[target]
@@ -262,7 +318,7 @@ func (r *Router) Decide(ctx context.Context, target string) Decision {
 	if e == nil && len(ips) > 0 {
 		allCN := true
 		for _, ip := range ips {
-			if local(ip) || !r.Rules.MatchIP(ip) {
+			if local(ip) || !(r.Rules.MatchIP(ip) || r.Rules.private.MatchIP(ip)) {
 				allCN = false
 				break
 			}
@@ -278,4 +334,14 @@ func (r *Router) Decide(ctx context.Context, target string) Decision {
 	r.cache[target] = cached{decision, time.Now().Add(time.Minute)}
 	r.mu.Unlock()
 	return decision
+}
+
+// Counts reports direct domains (cn + private) and direct IP prefixes.
+func (r *Rules) Counts() (domains, prefixes int) {
+	domains, prefixes = len(r.suffix)+len(r.exact), len(r.prefixes)
+	if r.private != nil {
+		domains += len(r.private.suffix) + len(r.private.exact)
+		prefixes += len(r.private.prefixes)
+	}
+	return
 }

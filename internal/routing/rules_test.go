@@ -92,7 +92,7 @@ func TestRoutingUsesAllAddressesAndDoesNotResolveKnownRules(t *testing.T) {
 			}
 			return a, nil
 		}
-		d := r.Decide(context.Background(), "unknown-snapshot-domain.example:443")
+		d := r.Decide(context.Background(), "unknown-snapshot-domain-7f3k.com:443")
 		if d.Direct != tc.want {
 			t.Fatal(tc, d)
 		}
@@ -112,13 +112,13 @@ func TestSnapshotIntegrityAndFallback(t *testing.T) {
 	if e != nil || r.proxy == nil {
 		t.Fatal(e)
 	}
-	s.Files["proxy-list.txt"] += "\nnew-proxy.example"
+	s.Files["geosite-geolocation-not-cn.list"] += "\n+.new-proxy.example"
 	if _, e = s.Parse(); e == nil {
 		t.Fatal("tamper accepted")
 	}
-	sum := sha256.Sum256([]byte(s.Files["proxy-list.txt"]))
+	sum := sha256.Sum256([]byte(s.Files["geosite-geolocation-not-cn.list"]))
 	for i := range s.Sources {
-		if s.Sources[i].File == "proxy-list.txt" {
+		if s.Sources[i].File == "geosite-geolocation-not-cn.list" {
 			s.Sources[i].SHA256 = hex.EncodeToString(sum[:])
 		}
 	}
@@ -135,5 +135,27 @@ func TestSnapshotIntegrityAndFallback(t *testing.T) {
 	r, info, e := Load(file)
 	if e != nil || !r.MatchDomain("qq.com") || !strings.Contains(info["warning"].(string), "内置") {
 		t.Fatal(info, e)
+	}
+}
+
+// Clash Verge Rev style decisions with the bundled meta-rules-dat lists.
+func TestMetaRulesDatDecisions(t *testing.T) {
+	rules, e := Builtin()
+	if e != nil {
+		t.Fatal(e)
+	}
+	r, _ := New(rules, "")
+	r.Lookup = func(context.Context, string) ([]netip.Addr, error) { return nil, errors.New("offline") }
+	for target, direct := range map[string]bool{
+		"baidu.com:443": true, "www.taobao.com:443": true, "router.asus.com:80": true,
+		"google.com:443": false, "www.youtube.com:443": false, "github.com:443": false,
+		"114.114.114.114:53": true, "100.64.1.1:80": true, "8.8.8.8:53": false,
+	} {
+		if got := r.Decide(context.Background(), target).Direct; got != direct {
+			t.Errorf("%s: direct=%v, want %v", target, got, direct)
+		}
+	}
+	if !rules.proxy.MatchDomain("google.com") || rules.MatchDomain("google.com") {
+		t.Fatal("geolocation-!cn / cn lists mixed up")
 	}
 }

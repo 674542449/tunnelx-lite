@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -67,6 +66,7 @@ func (e *Engine) UpdateRoutingRules() error {
 		return err
 	}
 	e.rules = r
-	e.ruleInfo = map[string]any{"source": "updated", "updated_at": snapshot.UpdatedAt, "domains": len(strings.Split(snapshot.Files["direct-list.txt"], "\n")), "ip_prefixes": len(strings.Fields(snapshot.Files["china.txt"] + "\n" + snapshot.Files["china6.txt"])), "sources": snapshot.Sources}
+	domains, prefixes := r.Counts()
+	e.ruleInfo = map[string]any{"source": "updated", "updated_at": snapshot.UpdatedAt, "domains": domains, "ip_prefixes": prefixes, "sources": snapshot.Sources}
 	return nil
 }

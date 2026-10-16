@@ -25,7 +25,11 @@ type Snapshot struct {
 }
 
 func (s Snapshot) Parse() (*Rules, error) {
-	required := map[string]bool{"direct-list.txt": true, "proxy-list.txt": true, "china.txt": true, "china6.txt": true}
+	required := map[string]bool{}
+	for _, name := range ruleFiles {
+		required[name] = true
+	}
+	files := map[string][]byte{}
 	for _, src := range s.Sources {
 		if !required[src.File] {
 			return nil, errors.New("规则文件重复或未知")
@@ -36,29 +40,31 @@ func (s Snapshot) Parse() (*Rules, error) {
 		if !ok || hex.EncodeToString(sum[:]) != src.SHA256 {
 			return nil, errors.New("规则快照校验失败")
 		}
+		files[src.File] = []byte(b)
 	}
-	if len(s.Sources) != 4 {
+	if len(required) != 0 {
 		return nil, errors.New("规则快照不完整")
 	}
-	r, e := Parse([]byte(s.Files["direct-list.txt"]), []byte(s.Files["china.txt"]+"\n"+s.Files["china6.txt"]))
-	if e != nil {
-		return nil, e
-	}
-	r.proxy, e = Parse([]byte(s.Files["proxy-list.txt"]), nil)
-	if e != nil {
-		return nil, e
-	}
-	if len(r.suffix) < 1000 || len(r.prefixes) < 1000 || len(r.proxy.suffix) < 100 {
-		return nil, errors.New("规则数量异常，保留原有规则")
-	}
-	return r, nil
+	return assemble(files)
 }
+
+// legacy reports a snapshot saved by an earlier release with other rule sources.
+func (s Snapshot) legacy() bool {
+	for _, src := range s.Sources {
+		if src.File == "direct-list.txt" || src.File == "china.txt" {
+			return true
+		}
+	}
+	return false
+}
+
 func Load(path string) (*Rules, map[string]any, error) {
 	r, e := Builtin()
 	if e != nil {
 		return nil, nil, e
 	}
-	info := map[string]any{"source": "builtin", "domains": len(r.suffix) + len(r.exact), "ip_prefixes": len(r.prefixes), "sources": Metadata()}
+	domains, prefixes := r.Counts()
+	info := map[string]any{"source": "builtin", "domains": domains, "ip_prefixes": prefixes, "sources": Metadata()}
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return r, info, nil
@@ -72,12 +78,16 @@ func Load(path string) (*Rules, map[string]any, error) {
 		info["warning"] = "规则快照无效，使用内置规则"
 		return r, info, nil
 	}
+	if s.legacy() {
+		return r, info, nil
+	}
 	updated, err := s.Parse()
 	if err != nil {
 		info["warning"] = err.Error() + "，使用内置规则"
 		return r, info, nil
 	}
-	return updated, map[string]any{"source": "updated", "updated_at": s.UpdatedAt, "domains": len(updated.suffix) + len(updated.exact), "ip_prefixes": len(updated.prefixes), "sources": s.Sources}, nil
+	domains, prefixes = updated.Counts()
+	return updated, map[string]any{"source": "updated", "updated_at": s.UpdatedAt, "domains": domains, "ip_prefixes": prefixes, "sources": s.Sources}, nil
 }
 func Download(ctx context.Context, h *http.Client) (Snapshot, error) {
 	s := Snapshot{UpdatedAt: time.Now().Unix(), Files: map[string]string{}}
@@ -86,7 +96,7 @@ func Download(ctx context.Context, h *http.Client) (Snapshot, error) {
 		if e != nil {
 			return nil, e
 		}
-		req.Header.Set("User-Agent", "tunnelX-routing")
+		req.Header.Set("User-Agent", "txlite-routing")
 		res, e := h.Do(req)
 		if e != nil {
 			return nil, e
@@ -101,31 +111,27 @@ func Download(ctx context.Context, h *http.Client) (Snapshot, error) {
 		}
 		return b, e
 	}
-	for _, src := range []struct {
-		repo, branch string
-		files        []string
-	}{{"Loyalsoldier/v2ray-rules-dat", "release", []string{"direct-list.txt", "proxy-list.txt"}}, {"gaoyifan/china-operator-ip", "ip-lists", []string{"china.txt", "china6.txt"}}} {
-		b, e := get("https://api.github.com/repos/"+src.repo+"/commits/"+src.branch, 2<<20)
+	b, e := get("https://api.github.com/repos/MetaCubeX/meta-rules-dat/commits/meta", 2<<20)
+	if e != nil {
+		return s, e
+	}
+	var c struct {
+		SHA string `json:"sha"`
+	}
+	if json.Unmarshal(b, &c) != nil || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(c.SHA) {
+		return s, errors.New("规则版本无效")
+	}
+	paths := map[string]string{"geosite-cn.list": "geosite/cn.list", "geosite-geolocation-not-cn.list": "geosite/geolocation-!cn.list", "geosite-private.list": "geosite/private.list", "geoip-cn.list": "geoip/cn.list", "geoip-private.list": "geoip/private.list"}
+	for _, name := range ruleFiles {
+		url := "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/" + c.SHA + "/geo/" + paths[name]
+		b, e = get(url, 8<<20)
 		if e != nil {
 			return s, e
 		}
-		var c struct {
-			SHA string `json:"sha"`
-		}
-		if json.Unmarshal(b, &c) != nil || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(c.SHA) {
-			return s, errors.New("规则版本无效")
-		}
-		for _, name := range src.files {
-			url := "https://raw.githubusercontent.com/" + src.repo + "/" + c.SHA + "/" + name
-			b, e = get(url, 8<<20)
-			if e != nil {
-				return s, e
-			}
-			sum := sha256.Sum256(b)
-			s.Files[name] = string(b)
-			s.Sources = append(s.Sources, Source{url, hex.EncodeToString(sum[:]), name})
-		}
+		sum := sha256.Sum256(b)
+		s.Files[name] = string(b)
+		s.Sources = append(s.Sources, Source{url, hex.EncodeToString(sum[:]), name})
 	}
-	_, e := s.Parse()
+	_, e = s.Parse()
 	return s, e
 }

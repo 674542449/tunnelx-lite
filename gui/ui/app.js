@@ -116,7 +116,7 @@ function openSettings() {
   const domains = el('textarea'); domains.value = (pref.direct_domains || []).join('\n'); domains.placeholder = '每行一个，例如 example.com';
   const theme = el('select'); for (const [v, t] of [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']]) { const o = el('option', t); o.value = v; theme.append(o); }
   theme.value = localStorage.getItem('txlite.theme') || 'system';
-  const ruleInfo = el('p', '分流规则：' + Number(rules.domains || 0).toLocaleString() + ' 条域名 · ' + Number(rules.ip_prefixes || 0).toLocaleString() + ' 段 IP · ' + (rules.source === 'updated' ? '更新于 ' + new Date(rules.updated_at * 1000).toLocaleString('zh-CN') : '随版本内置'), 'note');
+  const ruleInfo = el('p', '分流规则：' + Number(rules.domains || 0).toLocaleString() + ' 条域名 · ' + Number(rules.ip_prefixes || 0).toLocaleString() + ' 段 IP · ' + (rules.source === 'updated' ? '更新于 ' + new Date(rules.updated_at * 1000).toLocaleString('zh-CN') : '随版本内置') + '。来源：MetaCubeX meta-rules-dat（与 Clash Verge Rev 相同的 geosite / geoip）', 'note');
   const update = el('button', '更新分流规则'), recover = el('button', '恢复系统代理'), diag = el('button', '导出诊断报告');
   for (const b of [update, recover, diag]) b.type = 'button';
   update.onclick = () => task('更新分流规则', async () => { log('正在下载分流规则…'); await bridge().UpdateRoutingRules(); log('分流规则已更新，下次连接生效', 'ok'); $('dialog').close(); });

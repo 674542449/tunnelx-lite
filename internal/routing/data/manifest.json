@@ -1,22 +1,27 @@
 [
   {
-    "source": "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/b8bfd1e579b80504d01ccecb06ade7797a7680f0/direct-list.txt",
-    "sha256": "3cd1b4ddb0d1fc73eb505d2cc34cd065c50899e0c34fb91c29286d546b77023b",
-    "file": "direct-list.txt"
+    "source": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/4bd4f6af51d9656d0b417996326f576365057c76/geo/geosite/cn.list",
+    "sha256": "df3ad53ded7ec1e38488f86206a81d35144f4da318a9d64390fbba8119b2b83e",
+    "file": "geosite-cn.list"
   },
   {
-    "source": "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/b8bfd1e579b80504d01ccecb06ade7797a7680f0/proxy-list.txt",
-    "sha256": "32c451668eb87e5a08d1281f082985c9b171764328aa5650f93ea73ee49aef10",
-    "file": "proxy-list.txt"
+    "source": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/4bd4f6af51d9656d0b417996326f576365057c76/geo/geosite/geolocation-!cn.list",
+    "sha256": "0070cf8ba268a5db18c92ca90917d354cde2eac29daf44c64c48fb40d5805e55",
+    "file": "geosite-geolocation-not-cn.list"
   },
   {
-    "source": "https://raw.githubusercontent.com/gaoyifan/china-operator-ip/c5f638aa2f229909aafcbbd8f220bb48b00c4eaa/china.txt",
-    "sha256": "177c666b94dea7cfa7e5497a4b210680c220aee9ca865b22f58fadb0bda89660",
-    "file": "china.txt"
+    "source": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/4bd4f6af51d9656d0b417996326f576365057c76/geo/geosite/private.list",
+    "sha256": "9caf8f67450f6ff72fde0d2aec4d425238b88e371628011e51aab9185b0da73e",
+    "file": "geosite-private.list"
   },
   {
-    "source": "https://raw.githubusercontent.com/gaoyifan/china-operator-ip/c5f638aa2f229909aafcbbd8f220bb48b00c4eaa/china6.txt",
-    "sha256": "2f10cc43d117285f2199550f1c2b5eee9ab3f5f18f053521a1e88381e197677a",
-    "file": "china6.txt"
+    "source": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/4bd4f6af51d9656d0b417996326f576365057c76/geo/geoip/cn.list",
+    "sha256": "07456bbfac8851a6a5149211841dcd0e7249e87bbcfab5a35891ec9eb1a8d22a",
+    "file": "geoip-cn.list"
+  },
+  {
+    "source": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/4bd4f6af51d9656d0b417996326f576365057c76/geo/geoip/private.list",
+    "sha256": "9ea58a874fd295cc44b401727732dd95b25ca8a573c823b80b4cd64ea4ff1973",
+    "file": "geoip-private.list"
   }
 ]

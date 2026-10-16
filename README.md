@@ -63,7 +63,7 @@ INBOUND=ipv6 OUTBOUND=ipv6 bash <(curl -fsSL https://raw.githubusercontent.com/6
 
 1. 在服务器面板点「复制」，回到客户端按 **Ctrl+V**（或点「从剪贴板导入」）。
 2. 选中服务器，点「连接」或双击。
-3. 底部状态栏切换路由：**绕过大陆** / **全局代理** / **TUN 模式**；勾选「系统代理」后连接时自动设置 Windows 系统代理。
+3. 底部状态栏切换路由：**绕过大陆** / **全局代理** / **TUN 模式**；规则与 Clash Verge Rev 一致：绕过大陆按 `GEOSITE,private` → `GEOSITE,geolocation-!cn`（代理）→ `GEOSITE,cn` → `GEOIP,private/CN` 直连，其余走代理；全局代理除局域网外全部走代理；勾选「系统代理」后连接时自动设置 Windows 系统代理。
 
 - TUN 模式接管所有应用的 TCP / UDP，需要右键「以管理员身份运行」。
 - 不使用系统代理时，可手动把应用的代理设为 SOCKS5 `127.0.0.1:1080` 或 HTTP `127.0.0.1:8088`。
@@ -96,4 +96,4 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags=http2legacy -trimpath -ldfl
 
 ## 第三方组件
 
-客户端 TUN 模式使用 [tun2socks](https://github.com/xjasonlyu/tun2socks)（MIT）和 [Wintun](https://www.wintun.net/)，许可证与源码说明在 `gui/runtime`。分流规则数据的许可证在 `internal/routing/data`。
+客户端 TUN 模式使用 [tun2socks](https://github.com/xjasonlyu/tun2socks)（MIT）和 [Wintun](https://www.wintun.net/)，许可证与源码说明在 `gui/runtime`。分流规则使用 [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)（与 Clash Verge Rev 相同的 geosite / geoip 数据，GPL-3.0），许可证在 `internal/routing/data`。
