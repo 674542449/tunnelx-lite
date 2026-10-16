@@ -20,7 +20,7 @@ func TestRejectUnsafeClientConfiguration(t *testing.T) {
 		func(c *Client) { c.H2ReadIdle = 121 },
 		func(c *Client) { c.H2MaxAge = 1 },
 		func(c *Client) { c.Transport = "h3" },
-		func(c *Client) { c.Transport = "auto" },
+		func(c *Client) { c.Transport = "tcp" },
 	} {
 		c := base
 		mutate(&c)

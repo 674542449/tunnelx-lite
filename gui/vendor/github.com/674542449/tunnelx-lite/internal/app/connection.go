@@ -108,6 +108,7 @@ func (e *Engine) clientConfig(ctx context.Context, link share.Link) (config.Clie
 	e.mu.Lock()
 	c := link.Client(ip)
 	c.SOCKSListen, c.HTTPListen, c.WebListen, c.DeviceID = e.settings.SOCKS, e.settings.HTTP, e.settings.Web, e.deviceID
+	c.Transport = e.preferences.transport()
 	e.mu.Unlock()
 	return c, nil
 }
@@ -116,21 +117,24 @@ func (e *Engine) clientConfig(ctx context.Context, link share.Link) (config.Clie
 // An authenticated request for a forbidden loopback target is refused by the
 // server with its protocol header; a wrong key only ever sees the decoy site.
 func verifyGateway(ctx context.Context, m *client.Mux) error {
-	probe, stop := context.WithTimeout(ctx, 15*time.Second)
-	defer stop()
-	res, err := m.PublicGET(probe)
-	if res != nil {
-		io.Copy(io.Discard, io.LimitReader(res.Body, 8192))
-		res.Body.Close()
-	}
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	if err != nil || res.StatusCode != 200 {
-		return errors.New("无法与服务器建立安全连接：请检查地址和端口是否放行，或分享链接是否来自这台服务器")
-	}
-	if !m.LastECH.Load() {
-		return errors.New("服务器没有接受 ECH 加密握手，请确认分享链接与服务器一致")
+	// QUIC-only mode does not need the TCP port; its handshake checks ECH itself.
+	if m.Config.Transport != "quic" {
+		probe, stop := context.WithTimeout(ctx, 15*time.Second)
+		defer stop()
+		res, err := m.PublicGET(probe)
+		if res != nil {
+			io.Copy(io.Discard, io.LimitReader(res.Body, 8192))
+			res.Body.Close()
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil || res.StatusCode != 200 {
+			return errors.New("无法与服务器建立安全连接：请检查地址和端口是否放行，或分享链接是否来自这台服务器")
+		}
+		if !m.LastECH.Load() {
+			return errors.New("服务器没有接受 ECH 加密握手，请确认分享链接与服务器一致")
+		}
 	}
 	admit, stopAdmit := context.WithTimeout(ctx, 10*time.Second)
 	defer stopAdmit()
@@ -148,6 +152,9 @@ func verifyGateway(ctx context.Context, m *client.Mux) error {
 	}
 	if errors.As(err, &rejected) {
 		return errors.New("密钥认证失败：服务器的密钥可能已被重置，请从面板复制新的分享链接重新导入")
+	}
+	if m.Config.Transport == "quic" {
+		return err
 	}
 	return errors.New("服务器响应超时，请稍后重试或更换服务器")
 }
@@ -314,6 +321,7 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64) (result e
 	e.connecting, e.connectCancel = false, nil
 	committed = true
 	e.mu.Unlock()
+	m.PrewarmQUIC()
 	if tun != nil {
 		go func() {
 			<-tun.Done()

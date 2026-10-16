@@ -21,7 +21,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/tunmode"
 )
 
-const Version = "v0.1.9"
+const Version = "v0.2.0"
 
 type Settings struct {
 	SOCKS string `json:"socks_listen"`
@@ -33,6 +33,17 @@ type Preferences struct {
 	SelectedID    string   `json:"selected_id"`
 	ProxyMode     string   `json:"proxy_mode"`
 	DirectDomains []string `json:"direct_domains"`
+	Transport     string   `json:"transport,omitempty"` // "auto" (default), "quic" or "h2"
+}
+
+// ValidTransport accepts the transport choices offered in settings.
+func ValidTransport(t string) bool { return t == "" || t == "auto" || t == "quic" || t == "h2" }
+
+func (p Preferences) transport() string {
+	if p.Transport == "" {
+		return "auto"
+	}
+	return p.Transport
 }
 
 type Health struct {
@@ -117,7 +128,7 @@ func New(root string, settings Settings) (*Engine, error) {
 	}
 	if b, err := os.ReadFile(e.statePath("preferences.json")); err == nil {
 		p := e.preferences
-		if json.Unmarshal(b, &p) == nil && routing.ValidMode(p.ProxyMode) {
+		if json.Unmarshal(b, &p) == nil && routing.ValidMode(p.ProxyMode) && ValidTransport(p.Transport) {
 			e.preferences = p
 		} else {
 			e.startupWarning += " 本机偏好无法读取，已使用默认设置。"
@@ -173,6 +184,7 @@ func (e *Engine) Status() map[string]any {
 	}
 	s := map[string]any{"version": Version, "connected": e.mux != nil, "connection_state": state, "connection_stage": e.stage, "health": e.health, "preferences": e.preferences, "startup_warning": e.startupWarning, "node_name": e.nodeName, "node_id": e.nodeID, "system_proxy": e.system.Enabled(), "system_proxy_taken": e.system.Taken(), "socks": e.settings.SOCKS, "http": e.settings.HTTP, "logs": filepath.Join(e.root, "logs"), "proxy_recovery_error": e.proxyRecoveryError, "server_count": len(e.servers)}
 	s["routing_rules"] = e.ruleInfo
+	s["transport_preference"] = e.preferences.transport()
 	s["recovering"] = e.recovering
 	s["recovery_attempt"] = e.recoveryAttempt
 	s["tun"] = e.tunInfo
@@ -196,6 +208,7 @@ func (e *Engine) Status() map[string]any {
 		s["active"] = e.mux.Stats.Active.Load()
 		s["connected_at"] = e.connectedAt.Unix()
 		s["ech"] = e.mux.LastECH.Load()
+		s["transport"] = e.mux.ActiveTransport()
 		s["logging"] = e.mux.LoggingStatus()
 	}
 	return s
@@ -225,6 +238,22 @@ func (e *Engine) ConnLogs() []ConnLog {
 }
 
 func (e *Engine) Close() error { return e.Disconnect() }
+
+// SaveTransport chooses how the client reaches the server; it applies to the
+// next connection.
+func (e *Engine) SaveTransport(t string) error {
+	if t == "" || !ValidTransport(t) {
+		return errors.New("传输方式无效")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.mux != nil || e.connecting || e.recovering || e.stopping > 0 {
+		return errors.New("请先断开连接，再修改传输方式")
+	}
+	p := e.preferences
+	p.Transport = t
+	return e.savePreferencesLocked(p)
+}
 
 // ReleaseSystemProxy hands the Windows proxy back at once, for when the
 // session ends and there is no time for an orderly disconnect.

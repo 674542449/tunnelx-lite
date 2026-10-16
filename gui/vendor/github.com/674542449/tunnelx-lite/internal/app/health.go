@@ -12,6 +12,22 @@ import (
 )
 
 func probeHealth(ctx context.Context, m *client.Mux) string {
+	if m.Config.Transport == "quic" {
+		// The gateway answers an authenticated request for a refused target.
+		t, err := m.OpenTCP(ctx, "127.0.0.1:9")
+		var refused *client.RequestError
+		if err == nil {
+			t.Close()
+			return ""
+		}
+		if errors.As(err, &refused) && refused.Known {
+			return ""
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "timeout"
+		}
+		return "network_or_tls"
+	}
 	r, err := m.PublicGET(ctx)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {

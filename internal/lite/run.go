@@ -40,6 +40,7 @@ type Runtime struct {
 	// proxyErr is set when the proxy listener could not start; the panel keeps
 	// running so the owner can pick another port or inbound family.
 	proxyErr atomic.Value
+	quicErr  atomic.Value
 }
 
 func Open(d Dir) (*Runtime, error) {
@@ -66,6 +67,10 @@ func Open(d Dir) (*Runtime, error) {
 
 // ProxyError is empty while the proxy listener is serving.
 func (r *Runtime) ProxyError() string { s, _ := r.proxyErr.Load().(string); return s }
+
+// QUICError is empty while QUIC is serving or switched off. TCP keeps working
+// either way and clients in auto mode fall back to it.
+func (r *Runtime) QUICError() string { s, _ := r.quicErr.Load().(string); return s }
 
 func (r *Runtime) Totals() traffic {
 	r.mu.Lock()
@@ -97,8 +102,21 @@ func (r *Runtime) Run(ctx context.Context) error {
 	panel := &http.Server{Addr: ":" + strconv.Itoa(r.cfg.PanelPort), Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}, ErrorLog: log.New(io.Discard, "", 0)}
 	proxyErrs, errs := make(chan error, 1), make(chan error, 1)
 	go func() { proxyErrs <- r.srv.Serve(ctx) }()
+	if r.srv.Config.QUIC {
+		go func() {
+			if e := r.srv.ServeQUIC(ctx); e != nil && ctx.Err() == nil {
+				msg := fmt.Sprintf("QUIC（UDP %d）启动失败：%v。客户端会自动改用 TCP", r.cfg.Port, e)
+				r.quicErr.Store(msg)
+				log.Print(msg)
+			}
+		}()
+	}
 	go func() { errs <- panel.ListenAndServeTLS("", "") }()
-	log.Printf("txlite %s 已启动：代理端口 %d，面板端口 %d", Version, r.cfg.Port, r.cfg.PanelPort)
+	quic := "关闭"
+	if r.srv.Config.QUIC {
+		quic = "UDP " + strconv.Itoa(r.cfg.Port)
+	}
+	log.Printf("txlite %s 已启动：代理端口 %d，QUIC %s，面板端口 %d", Version, r.cfg.Port, quic, r.cfg.PanelPort)
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	for {

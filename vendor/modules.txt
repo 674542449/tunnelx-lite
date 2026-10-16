@@ -1,5 +1,63 @@
+# github.com/andybalholm/brotli v1.0.6
+## explicit; go 1.12
+github.com/andybalholm/brotli
+# github.com/apernet/quic-go v0.63.1-0.20261004180939-a10df75c260c
+## explicit; go 1.26.0
+github.com/apernet/quic-go
+github.com/apernet/quic-go/congestion
+github.com/apernet/quic-go/internal/ackhandler
+github.com/apernet/quic-go/internal/congestion
+github.com/apernet/quic-go/internal/handshake
+github.com/apernet/quic-go/internal/monotime
+github.com/apernet/quic-go/internal/protocol
+github.com/apernet/quic-go/internal/qerr
+github.com/apernet/quic-go/internal/utils
+github.com/apernet/quic-go/internal/utils/linkedlist
+github.com/apernet/quic-go/internal/utils/minheap
+github.com/apernet/quic-go/internal/utils/ringbuffer
+github.com/apernet/quic-go/internal/utils/tree
+github.com/apernet/quic-go/internal/wire
+github.com/apernet/quic-go/monotime
+github.com/apernet/quic-go/qlog
+github.com/apernet/quic-go/qlogwriter
+github.com/apernet/quic-go/qlogwriter/jsontext
+github.com/apernet/quic-go/quicvarint
+# github.com/klauspost/compress v1.17.4
+## explicit; go 1.19
+github.com/klauspost/compress
+github.com/klauspost/compress/fse
+github.com/klauspost/compress/huff0
+github.com/klauspost/compress/internal/cpuinfo
+github.com/klauspost/compress/internal/snapref
+github.com/klauspost/compress/zstd
+github.com/klauspost/compress/zstd/internal/xxhash
+# github.com/refraction-networking/utls v1.8.2
+## explicit; go 1.24
+github.com/refraction-networking/utls
+github.com/refraction-networking/utls/dicttls
+github.com/refraction-networking/utls/internal/boring
+github.com/refraction-networking/utls/internal/byteorder
+github.com/refraction-networking/utls/internal/fips140tls
+github.com/refraction-networking/utls/internal/helper
+github.com/refraction-networking/utls/internal/hkdf
+github.com/refraction-networking/utls/internal/hpke
+github.com/refraction-networking/utls/internal/quicvarint
+github.com/refraction-networking/utls/internal/quicvarint/protocol
+github.com/refraction-networking/utls/internal/tls12
+github.com/refraction-networking/utls/internal/tls13
+# golang.org/x/crypto v0.57.0
+## explicit; go 1.26.0
+golang.org/x/crypto/chacha20
+golang.org/x/crypto/chacha20poly1305
+golang.org/x/crypto/cryptobyte
+golang.org/x/crypto/cryptobyte/asn1
+golang.org/x/crypto/hkdf
+golang.org/x/crypto/internal/alias
+golang.org/x/crypto/internal/poly1305
+golang.org/x/crypto/sha3
 # golang.org/x/net v0.59.0
 ## explicit; go 1.26.0
+golang.org/x/net/bpf
 golang.org/x/net/dns/dnsmessage
 golang.org/x/net/http/httpguts
 golang.org/x/net/http2
@@ -7,8 +65,14 @@ golang.org/x/net/http2/hpack
 golang.org/x/net/idna
 golang.org/x/net/internal/httpcommon
 golang.org/x/net/internal/httpsfv
+golang.org/x/net/internal/iana
+golang.org/x/net/internal/socket
+golang.org/x/net/ipv4
+golang.org/x/net/ipv6
 # golang.org/x/sys v0.48.0
 ## explicit; go 1.26.0
+golang.org/x/sys/cpu
+golang.org/x/sys/unix
 golang.org/x/sys/windows
 golang.org/x/sys/windows/registry
 # golang.org/x/text v0.42.0

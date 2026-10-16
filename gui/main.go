@@ -85,9 +85,10 @@ func (a *App) SavePreferences(id string) error { return a.engine.SavePreferences
 func (a *App) SaveProxyMode(mode, exceptions string) error {
 	return a.engine.SaveProxyMode(mode, exceptions)
 }
-func (a *App) UpdateRoutingRules() error { return a.engine.UpdateRoutingRules() }
-func (a *App) RecoverProxy() error       { return a.engine.RecoverProxy() }
-func (a *App) ConnLogs() []app.ConnLog   { return a.engine.ConnLogs() }
+func (a *App) UpdateRoutingRules() error    { return a.engine.UpdateRoutingRules() }
+func (a *App) SaveTransport(t string) error { return a.engine.SaveTransport(t) }
+func (a *App) RecoverProxy() error          { return a.engine.RecoverProxy() }
+func (a *App) ConnLogs() []app.ConnLog      { return a.engine.ConnLogs() }
 func (a *App) OpenLogs() error {
 	return exec.Command("explorer.exe", filepath.Join(a.dataDir, "logs")).Start()
 }

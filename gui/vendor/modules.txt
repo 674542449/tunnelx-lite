@@ -10,6 +10,9 @@ git.sr.ht/~jackmordaunt/go-toast/v2/wintoast
 github.com/674542449/tunnelx-lite/internal/app
 github.com/674542449/tunnelx-lite/internal/client
 github.com/674542449/tunnelx-lite/internal/config
+github.com/674542449/tunnelx-lite/internal/congestion
+github.com/674542449/tunnelx-lite/internal/congestion/bbr
+github.com/674542449/tunnelx-lite/internal/congestion/common
 github.com/674542449/tunnelx-lite/internal/diagnostics
 github.com/674542449/tunnelx-lite/internal/fsutil
 github.com/674542449/tunnelx-lite/internal/processowner
@@ -18,6 +21,30 @@ github.com/674542449/tunnelx-lite/internal/share
 github.com/674542449/tunnelx-lite/internal/systemproxy
 github.com/674542449/tunnelx-lite/internal/tunmode
 github.com/674542449/tunnelx-lite/internal/wire
+# github.com/andybalholm/brotli v1.0.6
+## explicit; go 1.12
+github.com/andybalholm/brotli
+# github.com/apernet/quic-go v0.63.1-0.20261004180939-a10df75c260c
+## explicit; go 1.26.0
+github.com/apernet/quic-go
+github.com/apernet/quic-go/congestion
+github.com/apernet/quic-go/internal/ackhandler
+github.com/apernet/quic-go/internal/congestion
+github.com/apernet/quic-go/internal/handshake
+github.com/apernet/quic-go/internal/monotime
+github.com/apernet/quic-go/internal/protocol
+github.com/apernet/quic-go/internal/qerr
+github.com/apernet/quic-go/internal/utils
+github.com/apernet/quic-go/internal/utils/linkedlist
+github.com/apernet/quic-go/internal/utils/minheap
+github.com/apernet/quic-go/internal/utils/ringbuffer
+github.com/apernet/quic-go/internal/utils/tree
+github.com/apernet/quic-go/internal/wire
+github.com/apernet/quic-go/monotime
+github.com/apernet/quic-go/qlog
+github.com/apernet/quic-go/qlogwriter
+github.com/apernet/quic-go/qlogwriter/jsontext
+github.com/apernet/quic-go/quicvarint
 # github.com/bep/debounce v1.2.1
 ## explicit
 github.com/bep/debounce
@@ -65,6 +92,15 @@ github.com/jchv/go-winloader/internal/memloader
 github.com/jchv/go-winloader/internal/pe
 github.com/jchv/go-winloader/internal/vmem
 github.com/jchv/go-winloader/internal/winloader
+# github.com/klauspost/compress v1.17.4
+## explicit; go 1.19
+github.com/klauspost/compress
+github.com/klauspost/compress/fse
+github.com/klauspost/compress/huff0
+github.com/klauspost/compress/internal/cpuinfo
+github.com/klauspost/compress/internal/snapref
+github.com/klauspost/compress/zstd
+github.com/klauspost/compress/zstd/internal/xxhash
 # github.com/labstack/echo/v4 v4.13.3
 ## explicit; go 1.20
 github.com/labstack/echo/v4
@@ -100,6 +136,20 @@ github.com/pkg/browser
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
+# github.com/refraction-networking/utls v1.8.2
+## explicit; go 1.24
+github.com/refraction-networking/utls
+github.com/refraction-networking/utls/dicttls
+github.com/refraction-networking/utls/internal/boring
+github.com/refraction-networking/utls/internal/byteorder
+github.com/refraction-networking/utls/internal/fips140tls
+github.com/refraction-networking/utls/internal/helper
+github.com/refraction-networking/utls/internal/hkdf
+github.com/refraction-networking/utls/internal/hpke
+github.com/refraction-networking/utls/internal/quicvarint
+github.com/refraction-networking/utls/internal/quicvarint/protocol
+github.com/refraction-networking/utls/internal/tls12
+github.com/refraction-networking/utls/internal/tls13
 # github.com/rivo/uniseg v0.4.7
 ## explicit; go 1.18
 github.com/rivo/uniseg
@@ -178,8 +228,17 @@ github.com/wailsapp/wails/v2/pkg/runtime
 ## explicit; go 1.26.0
 golang.org/x/crypto/acme
 golang.org/x/crypto/acme/autocert
+golang.org/x/crypto/chacha20
+golang.org/x/crypto/chacha20poly1305
+golang.org/x/crypto/cryptobyte
+golang.org/x/crypto/cryptobyte/asn1
+golang.org/x/crypto/hkdf
+golang.org/x/crypto/internal/alias
+golang.org/x/crypto/internal/poly1305
+golang.org/x/crypto/sha3
 # golang.org/x/net v0.59.0
 ## explicit; go 1.26.0
+golang.org/x/net/bpf
 golang.org/x/net/dns/dnsmessage
 golang.org/x/net/html
 golang.org/x/net/html/atom
@@ -190,8 +249,13 @@ golang.org/x/net/http2/hpack
 golang.org/x/net/idna
 golang.org/x/net/internal/httpcommon
 golang.org/x/net/internal/httpsfv
+golang.org/x/net/internal/iana
+golang.org/x/net/internal/socket
+golang.org/x/net/ipv4
+golang.org/x/net/ipv6
 # golang.org/x/sys v0.48.0
 ## explicit; go 1.26.0
+golang.org/x/sys/cpu
 golang.org/x/sys/unix
 golang.org/x/sys/windows
 golang.org/x/sys/windows/registry

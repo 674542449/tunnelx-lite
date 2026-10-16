@@ -195,6 +195,7 @@ type settings struct {
 	Inbound       string   `json:"inbound"`
 	OutboundIP    string   `json:"outbound_ip"`
 	BandwidthMbps float64  `json:"bandwidth_mbps"`
+	QUIC          *bool    `json:"quic,omitempty"` // nil keeps the current setting
 }
 
 func (r *Runtime) api(w http.ResponseWriter, req *http.Request, api, session, prefix string) {
@@ -205,7 +206,7 @@ func (r *Runtime) api(w http.ResponseWriter, req *http.Request, api, session, pr
 		ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
 		v4, v6 := detectIPs(ctx)
 		cancel()
-		reply(w, 200, map[string]any{"version": Version, "name": c.Name, "uptime": int64(time.Since(r.started).Seconds()), "active": r.srv.Active.Load(), "uploaded": t.Uploaded, "downloaded": t.Downloaded, "port": c.Port, "panel_port": c.PanelPort, "inbound": c.Inbound, "outbound_ip": c.OutboundIP, "bandwidth_limit": c.BandwidthLimit, "ipv4": v4, "ipv6": v6, "system": systemInfo(), "proxy_error": r.ProxyError()})
+		reply(w, 200, map[string]any{"version": Version, "name": c.Name, "uptime": int64(time.Since(r.started).Seconds()), "active": r.srv.Active.Load(), "uploaded": t.Uploaded, "downloaded": t.Downloaded, "port": c.Port, "panel_port": c.PanelPort, "inbound": c.Inbound, "outbound_ip": c.OutboundIP, "bandwidth_limit": c.BandwidthLimit, "ipv4": v4, "ipv6": v6, "system": systemInfo(), "proxy_error": r.ProxyError(), "quic": !c.NoQUIC, "quic_error": r.QUICError()})
 	case api == "links" && req.Method == "GET":
 		reply(w, 200, r.links(req.Context()))
 	case api == "qr" && req.Method == "GET":
@@ -225,7 +226,7 @@ func (r *Runtime) api(w http.ResponseWriter, req *http.Request, api, session, pr
 		w.Write(code.PNG())
 	case api == "settings" && req.Method == "GET":
 		c := r.config()
-		reply(w, 200, settings{Name: c.Name, Hosts: append([]string{}, c.Hosts...), Port: c.Port, Inbound: c.Inbound, OutboundIP: c.OutboundIP, BandwidthMbps: float64(c.BandwidthLimit) / 125000})
+		reply(w, 200, settings{Name: c.Name, Hosts: append([]string{}, c.Hosts...), Port: c.Port, Inbound: c.Inbound, OutboundIP: c.OutboundIP, BandwidthMbps: float64(c.BandwidthLimit) / 125000, QUIC: &[]bool{!c.NoQUIC}[0]})
 	case api == "settings" && req.Method == "POST":
 		r.saveSettings(w, req)
 	case api == "token/reset" && req.Method == "POST":
@@ -306,6 +307,26 @@ func (r *Runtime) saveSettings(w http.ResponseWriter, req *http.Request) {
 		}
 		l.Close()
 	}
+	noQUIC := old.NoQUIC
+	if b.QUIC != nil {
+		noQUIC = !*b.QUIC
+	}
+	if !noQUIC && (old.NoQUIC || b.Port != old.Port || b.Inbound != old.Inbound) {
+		udp := map[string]string{"ipv4": "udp4", "ipv6": "udp6"}[b.Inbound]
+		if udp == "" {
+			udp = "udp"
+		}
+		addr := ":0"
+		if b.Port != old.Port || old.NoQUIC {
+			addr = ":" + strconv.Itoa(b.Port)
+		}
+		pc, e := net.ListenPacket(udp, addr)
+		if e != nil {
+			fail(w, 400, "UDP 端口 "+strconv.Itoa(b.Port)+" 已被占用，无法开启 QUIC")
+			return
+		}
+		pc.Close()
+	}
 	hosts := []string{}
 	for _, h := range b.Hosts {
 		if h = strings.TrimSpace(h); h != "" {
@@ -325,8 +346,8 @@ func (r *Runtime) saveSettings(w http.ResponseWriter, req *http.Request) {
 	}
 	limit := int64(math.Round(b.BandwidthMbps * 125000))
 	r.update(w, func(c *Config) bool {
-		restart := c.Port != b.Port || c.Inbound != b.Inbound || c.OutboundIP != b.OutboundIP || c.BandwidthLimit != limit
-		c.Name, c.Hosts, c.Port, c.Inbound, c.OutboundIP, c.BandwidthLimit = b.Name, hosts, b.Port, b.Inbound, b.OutboundIP, limit
+		restart := c.Port != b.Port || c.Inbound != b.Inbound || c.OutboundIP != b.OutboundIP || c.BandwidthLimit != limit || c.NoQUIC != noQUIC
+		c.Name, c.Hosts, c.Port, c.Inbound, c.OutboundIP, c.BandwidthLimit, c.NoQUIC = b.Name, hosts, b.Port, b.Inbound, b.OutboundIP, limit, noQUIC
 		return restart
 	}, "设置已保存")
 }

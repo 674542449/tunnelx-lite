@@ -7,6 +7,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/674542449/tunnelx-lite/internal/wire"
 )
 
 // OpenTCPFast sends CONNECT and returns at once, so the application's first
@@ -16,6 +18,12 @@ import (
 func (m *Mux) OpenTCPFast(ctx context.Context, target string) (*Tunnel, error) {
 	if _, p, e := net.SplitHostPort(target); e != nil || p == "" {
 		return nil, errors.New("invalid target")
+	}
+	if t, ok, e := m.openOverQUIC(ctx, wire.QUICTCP, target, false); ok {
+		if e != nil {
+			flowFrom(ctx).failure("open_tcp", e)
+		}
+		return t, e
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, m.Config.Timeout())
 	h, e := m.h2(dialCtx)

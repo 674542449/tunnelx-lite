@@ -64,6 +64,7 @@ type Server struct {
 	AccessLog             string              `json:"access_log,omitempty"`
 	OutboundIP            string              `json:"outbound_ip,omitempty"`
 	Network               string              `json:"network,omitempty"` // "", "tcp4" or "tcp6": inbound address family
+	QUIC                  bool                `json:"quic,omitempty"`    // also serve QUIC on the UDP port of the same number
 }
 type ECHKey struct {
 	Config     []byte `json:"config"`
@@ -115,8 +116,10 @@ func (c *Client) Validate() error {
 	if c.Transport == "" {
 		c.Transport = "h2"
 	}
-	if c.Transport != "h2" {
-		return errors.New("transport must be h2")
+	// "h2" is HTTP/2 over TCP only; "quic" is QUIC over UDP only; "auto"
+	// prefers QUIC and falls back to HTTP/2 while UDP does not get through.
+	if c.Transport != "h2" && c.Transport != "quic" && c.Transport != "auto" {
+		return errors.New("transport must be h2, quic or auto")
 	}
 	if c.Privacy == "" {
 		c.Privacy = "normal"

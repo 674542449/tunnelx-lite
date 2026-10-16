@@ -47,7 +47,8 @@ type Mux struct {
 	recorder    atomic.Pointer[diagnostics.Logger]
 	flowMu      sync.Mutex
 	flows       map[string]*flowLog
-	growing     bool     // a background carrier dial is in progress; guarded by h2Mu
+	growing     bool // a background carrier dial is in progress; guarded by h2Mu
+	quic        quicState
 	bindAddr    net.Addr // tests only: source address for carrier dials
 }
 
@@ -430,6 +431,15 @@ func (m *Mux) openH2(ctx context.Context, h *http2.ClientConn, r *http.Request, 
 	return t, nil
 }
 func (m *Mux) OpenTCP(ctx context.Context, target string) (*Tunnel, error) {
+	if t, ok, e := m.openOverQUIC(ctx, wire.QUICTCP, target, true); ok {
+		if e != nil {
+			fields := errorFields(e)
+			fields["stage"] = "open_tcp"
+			m.event(ctx, "connection_open_failed", fields)
+			flowFrom(ctx).failure("open_tcp", e)
+		}
+		return t, e
+	}
 	t, e := m.open(ctx, target, false)
 	if e == nil {
 		flowFrom(ctx).openedOn(t)
@@ -443,7 +453,10 @@ func (m *Mux) OpenTCP(ctx context.Context, target string) (*Tunnel, error) {
 	return t, e
 }
 func (m *Mux) OpenUDP(ctx context.Context, target string) (*wire.PacketStream, error) {
-	t, e := m.open(ctx, target, true)
+	t, ok, e := m.openOverQUIC(ctx, wire.QUICUDP, target, true)
+	if !ok {
+		t, e = m.open(ctx, target, true)
+	}
 	if e != nil {
 		fields := errorFields(e)
 		fields["stage"] = "open_udp"
@@ -458,6 +471,7 @@ func (m *Mux) Close() error {
 	m.mu.Lock()
 	m.closed = true
 	m.mu.Unlock()
+	m.closeQUIC()
 	m.h2Mu.Lock()
 	defer m.h2Mu.Unlock()
 	for _, entry := range m.h2Pool {

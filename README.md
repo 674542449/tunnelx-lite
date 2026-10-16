@@ -2,7 +2,7 @@
 
 一个可以单独使用的代理服务：服务器一键安装，复制分享链接，粘贴进 Windows 客户端就能用。没有账号、没有订阅后台。
 
-- **协议**：HTTP/2 CONNECT 隧道 + TLS 1.3 + ECH（加密 SNI），客户端按证书公钥指纹校验服务器，不需要域名。
+- **协议**：两种传输，同一个端口号——QUIC（UDP，BBR 拥塞控制，每个连接一条独立的流，丢包时网页仍然很快）和 HTTP/2 CONNECT（TCP）；都用 TLS 1.3 + ECH（加密 SNI），客户端按证书公钥指纹校验服务器，不需要域名。客户端默认「自动」：优先 QUIC，UDP 不通时自动改用 TCP。
 - **服务端**：Ubuntu / Debian，入站可选双栈 / 仅 IPv4 / 仅 IPv6，出站可选自动、IPv4 优先、IPv6 优先、仅 IPv4、仅 IPv6；自带 HTTPS 管理面板和 `txlite` 命令行菜单；安装时自动开启 BBR + fq。
 - **客户端**：Windows 图形界面（类似 v2rayN），支持绕过大陆、全局代理、TUN 模式。
 
@@ -18,6 +18,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/674542449/tunnelx-lite/main/
 
 - 面板地址（`https://服务器IP:面板端口/随机路径/`）和面板密码
 - IPv4 / IPv6 分享链接（`txlite://…`）
+
+云服务器请在安全组放行代理端口的 **TCP 和 UDP**（UDP 用于 QUIC）以及面板端口的 TCP。UDP 没放行也能用，客户端会自动改用 TCP。
 
 端口默认随机。想指定端口：
 
@@ -68,7 +70,7 @@ INBOUND=ipv6 OUTBOUND=ipv6 bash <(curl -fsSL https://raw.githubusercontent.com/6
 - TUN 模式接管所有应用的 TCP / UDP，需要右键「以管理员身份运行」。
 - 不认系统代理的程序，可手动把它的代理设为 SOCKS5 `127.0.0.1:1080` 或 HTTP `127.0.0.1:8088`。
 - 右键服务器：测试延迟、复制分享链接、重命名、删除。
-- 设置里可以填写直连例外域名、更新分流规则、恢复系统代理、导出脱敏诊断报告。
+- 设置里可以选择传输方式（自动 / 仅 QUIC / 仅 TCP）、填写直连例外域名、更新分流规则、恢复系统代理、导出脱敏诊断报告。底部状态栏显示当前实际使用的传输方式。
 - 导入的服务器（含密钥）用 Windows DPAPI 加密保存在 `%LOCALAPPDATA%\txlite`。在程序目录新建 `portable` 文件夹即可改为便携模式。
 
 ## 分享链接格式
@@ -96,4 +98,4 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags=http2legacy -trimpath -ldfl
 
 ## 第三方组件
 
-客户端 TUN 模式使用 [tun2socks](https://github.com/xjasonlyu/tun2socks)（MIT）和 [Wintun](https://www.wintun.net/)，许可证与源码说明在 `gui/runtime`。分流规则使用 [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)（与 Clash Verge Rev 相同的 geosite / geoip 数据，GPL-3.0），许可证在 `internal/routing/data`。
+客户端 TUN 模式使用 [tun2socks](https://github.com/xjasonlyu/tun2socks)（MIT）和 [Wintun](https://www.wintun.net/)，许可证与源码说明在 `gui/runtime`。QUIC 使用 [apernet/quic-go](https://github.com/apernet/quic-go)（quic-go 的分支，支持替换拥塞控制，MIT），BBR 拥塞控制复制自 [Hysteria](https://github.com/apernet/hysteria)（MIT，许可证在 `internal/congestion`）。分流规则使用 [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)（与 Clash Verge Rev 相同的 geosite / geoip 数据，GPL-3.0），许可证在 `internal/routing/data`。

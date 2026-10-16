@@ -23,7 +23,7 @@ async function showApp() { $('login').hidden = true; $('app').hidden = false; aw
 async function refreshStatus() {
   const s = await api('status');
   $('server-name').textContent = s.name; $('version').textContent = s.version; $('state-dot').className = 'dot ' + (s.proxy_error ? 'bad' : 'ok');
-  if (s.proxy_error) notice(s.proxy_error, true);
+  if (s.proxy_error || s.quic_error) notice(s.proxy_error || s.quic_error, true);
   $('uptime').textContent = duration(s.uptime); $('active').textContent = s.active;
   $('up').textContent = bytes(s.uploaded); $('down').textContent = bytes(s.downloaded);
   const now = Date.now();
@@ -35,7 +35,8 @@ async function refreshStatus() {
     ['磁盘', sys.disk_total ? bytes(sys.disk_total - sys.disk_free) + ' / ' + bytes(sys.disk_total) : '—'],
     ['拥塞控制', (sys.congestion || '—') + (sys.qdisc ? ' + ' + sys.qdisc : '')],
     ['公网 IPv4', s.ipv4 || '未检测到'], ['公网 IPv6', s.ipv6 || '未检测到'],
-    ['代理端口', s.port + ' / TCP'], ['面板端口', s.panel_port + ' / TCP'],
+    ['代理端口', s.port + ' / TCP' + (s.quic ? '，' + s.port + ' / UDP（QUIC）' : '')], ['面板端口', s.panel_port + ' / TCP'],
+    ['QUIC', s.quic ? (s.quic_error ? '启动失败，客户端改用 TCP' : '已开启') : '已关闭'],
     ['入站', { '': '双栈（IPv4 + IPv6）', ipv4: '仅 IPv4', ipv6: '仅 IPv6' }[s.inbound || '']],
     ['出站', { '': '自动', prefer_ipv4: 'IPv4 优先', prefer_ipv6: 'IPv6 优先', ipv4: '仅 IPv4', ipv6: '仅 IPv6' }[s.outbound_ip || '']],
   ];
@@ -58,7 +59,7 @@ async function loadLinks() {
 
 async function loadSettings() {
   const s = await api('settings'), f = $('settings');
-  f.name.value = s.name; f.port.value = s.port; f.inbound.value = s.inbound || ''; f.outbound_ip.value = s.outbound_ip || ''; f.bandwidth_mbps.value = Math.round(s.bandwidth_mbps * 100) / 100; f.hosts.value = (s.hosts || []).join('\n');
+  f.name.value = s.name; f.port.value = s.port; f.inbound.value = s.inbound || ''; f.outbound_ip.value = s.outbound_ip || ''; f.bandwidth_mbps.value = Math.round(s.bandwidth_mbps * 100) / 100; f.quic.value = String(s.quic !== false); f.hosts.value = (s.hosts || []).join('\n');
 }
 async function loadLogs() { const lines = await api('logs'); $('logs').textContent = lines.length ? lines.slice(-200).join('\n') : '暂无日志'; $('logs').scrollTop = $('logs').scrollHeight; }
 
@@ -70,7 +71,7 @@ async function afterChange(result) {
 async function guard(button, fn) { button.disabled = true; try { await fn(); } catch (e) { notice(e.message, true); } finally { button.disabled = false; } }
 
 $('login-form').onsubmit = async e => { e.preventDefault(); $('login-error').textContent = ''; try { await api('login', { password: $('password').value }); $('password').value = ''; await showApp(); } catch (err) { $('login-error').textContent = err.message; } };
-$('settings').onsubmit = e => { e.preventDefault(); const f = e.target; guard(f.querySelector('button'), async () => afterChange(await api('settings', { name: f.name.value, port: Number(f.port.value), inbound: f.inbound.value, outbound_ip: f.outbound_ip.value, bandwidth_mbps: Number(f.bandwidth_mbps.value), hosts: f.hosts.value.split(/\s+/).filter(Boolean) }))); };
+$('settings').onsubmit = e => { e.preventDefault(); const f = e.target; guard(f.querySelector('button'), async () => afterChange(await api('settings', { name: f.name.value, port: Number(f.port.value), inbound: f.inbound.value, outbound_ip: f.outbound_ip.value, bandwidth_mbps: Number(f.bandwidth_mbps.value), quic: f.quic.value === 'true', hosts: f.hosts.value.split(/\s+/).filter(Boolean) }))); };
 $('password-form').onsubmit = e => { e.preventDefault(); const f = e.target; guard(f.querySelector('button'), async () => { await api('password', { current: f.current.value, new: f.new.value }); f.reset(); notice('面板密码已修改，其他已登录的浏览器需要重新登录'); }); };
 $('reset-token').onclick = e => { if (!confirm('重置后所有旧分享链接立即失效，客户端需要重新导入新链接。确定重置？')) return; guard(e.target, async () => afterChange(await api('token/reset', {}))); };
 $('reset-traffic').onclick = e => { if (!confirm('确定清零累计流量统计？')) return; guard(e.target, async () => { notice((await api('traffic/reset', {})).message); prev = null; await refreshStatus(); }); };

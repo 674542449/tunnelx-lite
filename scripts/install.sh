@@ -35,8 +35,9 @@ download(){
 # start whenever the user pauses between pages (tcp_slow_start_after_idle).
 enable_bbr(){
   local conf=/etc/sysctl.d/99-txlite-bbr.conf
-  { echo 'net.ipv4.tcp_slow_start_after_idle = 0' >/etc/sysctl.d/99-txlite-tcp.conf && chmod 644 /etc/sysctl.d/99-txlite-tcp.conf; } 2>/dev/null || true
-  sysctl -q -w net.ipv4.tcp_slow_start_after_idle=0 >/dev/null 2>&1 || true
+  # QUIC needs larger UDP socket buffers than the kernel default.
+  { printf '%s\n' 'net.ipv4.tcp_slow_start_after_idle = 0' 'net.core.rmem_max = 7500000' 'net.core.wmem_max = 7500000' >/etc/sysctl.d/99-txlite-tcp.conf && chmod 644 /etc/sysctl.d/99-txlite-tcp.conf; } 2>/dev/null || true
+  sysctl -q -w net.ipv4.tcp_slow_start_after_idle=0 net.core.rmem_max=7500000 net.core.wmem_max=7500000 >/dev/null 2>&1 || true
   modprobe tcp_bbr >/dev/null 2>&1 || true
   if ! grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
     echo "提示：内核不支持 BBR，保持系统默认"; return 0
@@ -78,20 +79,23 @@ UNIT
 }
 
 ports(){ python3 -c "import json;c=json.load(open('$DIR/config.json'));print(c['port'],c['panel_port'])" 2>/dev/null || true; }
+# rules lists proto:port pairs: the proxy (TCP, and UDP for QUIC) and the panel.
+rules(){ local port panel; read -r port panel <<<"$(ports)"; test -n "$port" && echo "tcp:$port udp:$port tcp:$panel"; }
 
 # iptables_ports insert|delete: images such as Oracle Cloud's end INPUT with a
 # REJECT rule, so a new port stays closed until it is accepted before that rule.
 iptables_ports(){
-  local action=$1 fw p changed=""
+  local action=$1 fw r proto p changed=""
   for fw in iptables ip6tables; do
     command -v "$fw" >/dev/null || continue
-    for p in $(ports); do
+    for r in $(rules); do
+      proto=${r%%:*}; p=${r#*:}
       if test "$action" = insert; then
         "$fw" -S INPUT 2>/dev/null | grep -q -- '-j REJECT' || continue
-        "$fw" -C INPUT -p tcp --dport "$p" -m comment --comment txlite -j ACCEPT 2>/dev/null && continue
-        "$fw" -I INPUT -p tcp --dport "$p" -m comment --comment txlite -j ACCEPT 2>/dev/null && { echo "$fw 已放行 $p/tcp"; changed=1; }
+        "$fw" -C INPUT -p "$proto" --dport "$p" -m comment --comment txlite -j ACCEPT 2>/dev/null && continue
+        "$fw" -I INPUT -p "$proto" --dport "$p" -m comment --comment txlite -j ACCEPT 2>/dev/null && { echo "$fw 已放行 $p/$proto"; changed=1; }
       else
-        while "$fw" -D INPUT -p tcp --dport "$p" -m comment --comment txlite -j ACCEPT 2>/dev/null; do changed=1; done
+        while "$fw" -D INPUT -p "$proto" --dport "$p" -m comment --comment txlite -j ACCEPT 2>/dev/null; do changed=1; done
       fi
     done
   done
@@ -102,10 +106,10 @@ open_firewall(){
   local port panel
   read -r port panel <<<"$(ports)"
   if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-    for p in $port $panel; do ufw allow "$p/tcp" >/dev/null && echo "ufw 已放行 $p/tcp"; done
+    for r in $(rules); do ufw allow "${r#*:}/${r%%:*}" >/dev/null && echo "ufw 已放行 ${r#*:}/${r%%:*}"; done
   fi
   iptables_ports insert
-  echo "如果使用云服务器，请在安全组放行 TCP $port（代理）和 $panel（面板）。"
+  echo "如果使用云服务器，请在安全组放行 TCP $port 和 UDP $port（代理，UDP 用于 QUIC）以及 TCP $panel（面板）。"
 }
 
 install_all(){

@@ -18,7 +18,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/config"
 )
 
-const Version = "v0.1.9"
+const Version = "v0.2.0"
 
 type Config struct {
 	Name           string   `json:"name"`
@@ -33,6 +33,7 @@ type Config struct {
 	Inbound        string   `json:"inbound,omitempty"` // "", "ipv4" or "ipv6"
 	OutboundIP     string   `json:"outbound_ip,omitempty"`
 	BandwidthLimit int64    `json:"bandwidth_limit_bytes,omitempty"`
+	NoQUIC         bool     `json:"no_quic,omitempty"` // QUIC on the UDP port is on unless switched off
 }
 
 // Dir holds config.json, the certificate, the ECH key and traffic counters.
@@ -103,7 +104,7 @@ func Save(d Dir, c Config) error {
 
 // Server builds the kernel server configuration from the owner settings.
 func (c Config) Server(d Dir) config.Server {
-	return config.Server{Listen: ":" + strconv.Itoa(c.Port), CertFile: d.Cert(), KeyFile: d.Key(), ECHKeyFile: d.ECH(), InnerName: c.InnerName, InnerCertFile: d.Cert(), InnerKeyFile: d.Key(), Tokens: []string{c.Token}, Network: map[string]string{"ipv4": "tcp4", "ipv6": "tcp6"}[c.Inbound], OutboundIP: c.OutboundIP, BandwidthLimit: c.BandwidthLimit, MaxConnections: 1024}
+	return config.Server{Listen: ":" + strconv.Itoa(c.Port), CertFile: d.Cert(), KeyFile: d.Key(), ECHKeyFile: d.ECH(), InnerName: c.InnerName, InnerCertFile: d.Cert(), InnerKeyFile: d.Key(), Tokens: []string{c.Token}, Network: map[string]string{"ipv4": "tcp4", "ipv6": "tcp6"}[c.Inbound], OutboundIP: c.OutboundIP, BandwidthLimit: c.BandwidthLimit, MaxConnections: 1024, QUIC: !c.NoQUIC}
 }
 
 func randomToken(n int) string {

@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 const bridge = () => { const b = window.go?.main?.App; if (!b) throw Error('客户端正在初始化，请稍候'); return b; };
 let status = {}, servers = [], selected = '', probes = new Map(), busy = false, menuFor = '';
+const transportNames = { auto: '自动（优先 QUIC）', quic: '仅 QUIC（UDP）', h2: '仅 TCP（HTTP/2）' };
 const stages = { restoring_proxy: '正在恢复代理设置', verifying_tls: '正在建立安全连接', authenticating: '正在验证密钥', starting_proxy: '正在启动本地代理', checking_tun_network: '正在检查 IPv6 出口', starting_tun: '正在配置 TUN 虚拟网卡', reconnecting: '网络变化，正在自动重连', cancelling: '正在取消' };
 
 function el(tag, text, cls) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; }
@@ -63,6 +64,9 @@ function render() {
   const current = servers.find(s => s.id === (on || going ? status.node_id : active));
   $('current').textContent = current ? (on ? '当前：' : '活动服务器：') + current.name : '';
   $('speed').textContent = '↑ ' + bytes(on ? status.upload_rate : 0) + '/s  ↓ ' + bytes(on ? status.download_rate : 0) + '/s';
+  const tpref = status.transport_preference || 'auto';
+  $('transport').textContent = on ? '传输：' + (status.transport === 'quic' ? 'QUIC' : 'TCP') + (tpref === 'auto' ? '（自动）' : '') : '传输：' + transportNames[tpref];
+  $('transport').title = on && tpref === 'auto' && status.transport !== 'quic' ? 'UDP 暂时不通或 QUIC 尚未就绪，正在使用 TCP；QUIC 可用后新连接会自动改用 QUIC' : '可在设置中修改传输方式';
   $('ports').textContent = status.socks ? 'SOCKS ' + status.socks.split(':').pop() + ' · HTTP ' + status.http.split(':').pop() : '';
   const warning = [status.startup_warning, status.proxy_recovery_error].filter(Boolean).join(' ');
   $('warning').textContent = warning; $('warning').hidden = !warning;
@@ -118,6 +122,9 @@ function openSettings() {
   const domains = el('textarea'); domains.value = (pref.direct_domains || []).join('\n'); domains.placeholder = '每行一个，例如 example.com';
   const theme = el('select'); for (const [v, t] of [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']]) { const o = el('option', t); o.value = v; theme.append(o); }
   theme.value = localStorage.getItem('txlite.theme') || 'system';
+  const transport = el('select'); for (const [v, t] of Object.entries(transportNames)) { const o = el('option', t); o.value = v; transport.append(o); }
+  transport.value = status.transport_preference || 'auto';
+  const transportNote = el('p', '自动：优先用 QUIC（UDP，丢包时网页更快），UDP 被封或不通时自动改用 TCP。服务器需要放行与代理端口同号的 UDP 端口。', 'note');
   const ruleInfo = el('p', '分流规则：' + Number(rules.domains || 0).toLocaleString() + ' 条域名 · ' + Number(rules.ip_prefixes || 0).toLocaleString() + ' 段 IP · ' + (rules.source === 'updated' ? '更新于 ' + new Date(rules.updated_at * 1000).toLocaleString('zh-CN') : '随版本内置') + '。来源：MetaCubeX meta-rules-dat（与 Clash Verge Rev 相同的 geosite / geoip）', 'note');
   const update = el('button', '更新分流规则'), recover = el('button', '恢复系统代理'), diag = el('button', '导出诊断报告');
   for (const b of [update, recover, diag]) b.type = 'button';
@@ -127,8 +134,13 @@ function openSettings() {
   const actions = el('div', undefined, 'row'); actions.append(update, recover, diag);
   const ports = el('p', '本地端口：SOCKS5 ' + (status.socks || '—') + ' · HTTP ' + (status.http || '—') + '（可在数据目录的 settings.json 修改）', 'note');
   const data = el('p', '数据目录：' + (status.data_directory || '—') + '　版本：' + (status.version || ''), 'note');
-  dialog('设置', [field('绕过大陆模式下的直连例外', domains), field('界面主题', theme), ruleInfo, actions, ports, data], async () => {
+  dialog('设置', [field('绕过大陆模式下的直连例外', domains), field('传输方式', transport), transportNote, field('界面主题', theme), ruleInfo, actions, ports, data], async () => {
     applyTheme(theme.value);
+    if (transport.value !== (status.transport_preference || 'auto')) {
+      if (connected() || connecting()) throw Error('请先断开连接再修改传输方式');
+      await bridge().SaveTransport(transport.value);
+      log('传输方式已改为 ' + transportNames[transport.value] + '，下次连接生效', 'ok');
+    }
     if (connected() || connecting()) { if (domains.value.trim() !== (pref.direct_domains || []).join('\n')) throw Error('请先断开连接再修改直连例外'); return; }
     await bridge().SaveProxyMode(pref.proxy_mode || 'bypass_cn', domains.value);
     log('设置已保存', 'ok'); await refresh();
