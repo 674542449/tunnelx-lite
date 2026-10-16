@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -46,6 +47,8 @@ type Mux struct {
 	recorder    atomic.Pointer[diagnostics.Logger]
 	flowMu      sync.Mutex
 	flows       map[string]*flowLog
+	growing     bool     // a background carrier dial is in progress; guarded by h2Mu
+	bindAddr    net.Addr // tests only: source address for carrier dials
 }
 
 type h2Carrier struct {
@@ -131,21 +134,72 @@ func (m *Mux) h2(ctx context.Context) (*http2.ClientConn, error) {
 			usable = append(usable, entry)
 		}
 	}
-	// Each carrier admits a limited number of streams (128 on txlite servers);
-	// grow the pool instead of refusing new flows when every carrier is busy.
-	if len(usable) >= m.Config.H2Connections || len(m.h2Pool) >= max(2*m.Config.H2Connections, 8) {
-		for i := 0; i < len(usable); i++ {
-			entry := usable[m.h2Cursor%uint64(len(usable))]
-			m.h2Cursor++
+	// Spreading streams over several carriers keeps one lost packet from
+	// stalling every page request (TCP head-of-line blocking). Missing carriers
+	// are dialed in the background so a new flow never waits for a handshake
+	// while a usable carrier exists. Each carrier admits a limited number of
+	// streams (128 on txlite servers), so the pool also grows when all are busy.
+	poolCap := max(2*m.Config.H2Connections, 8)
+	if len(usable) > 0 && len(usable) < m.Config.H2Connections && len(m.h2Pool) < poolCap && !m.growing {
+		m.growing = true
+		go m.grow()
+	}
+	if len(usable) > 0 || len(m.h2Pool) >= poolCap {
+		// Least loaded first; the cursor breaks ties so idle carriers share work.
+		start := int(m.h2Cursor % uint64(max(len(usable), 1)))
+		m.h2Cursor++
+		order := make([]*h2Carrier, 0, len(usable))
+		order = append(order, usable[start:]...)
+		order = append(order, usable[:start]...)
+		sort.SliceStable(order, func(i, j int) bool { return order[i].conn.State().StreamsActive < order[j].conn.State().StreamsActive })
+		for _, entry := range order {
 			if entry.conn.ReserveNewRequest() {
 				return entry.conn, nil
 			}
 		}
-		return nil, errors.New("H2 connection pool is temporarily full")
+		if len(m.h2Pool) >= poolCap {
+			return nil, errors.New("H2 connection pool is temporarily full")
+		}
 	}
+	entry, e := m.dialCarrier(ctx)
+	if e != nil {
+		return nil, e
+	}
+	m.h2Pool = append(m.h2Pool, entry)
+	if !entry.conn.ReserveNewRequest() {
+		entry.conn.Close()
+		return nil, net.ErrClosed
+	}
+	return entry.conn, nil
+}
+
+// grow adds one carrier without holding h2Mu during the handshake.
+func (m *Mux) grow() {
+	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), scopeKey{}, "carrier"), m.Config.Timeout())
+	defer cancel()
+	entry, e := m.dialCarrier(ctx)
+	m.h2Mu.Lock()
+	defer m.h2Mu.Unlock()
+	m.growing = false
+	if e != nil {
+		return
+	}
+	m.mu.Lock()
+	closed := m.closed
+	m.mu.Unlock()
+	if closed {
+		entry.conn.Close()
+		entry.tcp.Close()
+		return
+	}
+	m.h2Pool = append(m.h2Pool, entry)
+}
+
+// dialCarrier opens one TLS + HTTP/2 connection to the server.
+func (m *Mux) dialCarrier(ctx context.Context) (*h2Carrier, error) {
 	t := m.tls.Clone()
 	t.NextProtos = []string{"h2"}
-	c, e := (&tls.Dialer{Config: t}).DialContext(ctx, "tcp", m.address())
+	c, e := (&tls.Dialer{Config: t, NetDialer: &net.Dialer{LocalAddr: m.bindAddr}}).DialContext(ctx, "tcp", m.address())
 	if e != nil {
 		fields := errorFields(e)
 		fields["transport"] = "h2"
@@ -168,14 +222,9 @@ func (m *Mux) h2(ctx context.Context) (*http2.ClientConn, error) {
 		return nil, e
 	}
 	id := m.recorder.Load().ID("carrier")
-	m.h2Pool = append(m.h2Pool, &h2Carrier{conn: cc, tcp: c, born: time.Now(), id: id})
 	m.event(ctx, "carrier_opened", map[string]any{"transport": "h2", "carrier_id": id, "ech_accepted": tc.ConnectionState().ECHAccepted})
 	m.Stats.H2Dials.Add(1)
-	if !cc.ReserveNewRequest() {
-		cc.Close()
-		return nil, net.ErrClosed
-	}
-	return cc, nil
+	return &h2Carrier{conn: cc, tcp: c, born: time.Now(), id: id}, nil
 }
 
 func (m *Mux) retireH2(cc *http2.ClientConn) {

@@ -47,7 +47,7 @@ func (p *Proxy) openTCP(ctx context.Context, target string) (*Tunnel, error) {
 	}
 	d := p.route(ctx, target)
 	if !d.Direct {
-		return p.Mux.OpenTCP(ctx, target)
+		return p.Mux.OpenTCPFast(ctx, target)
 	}
 	c, e := (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, "tcp", d.Address)
 	if e != nil {

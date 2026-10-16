@@ -31,8 +31,12 @@ download(){
 }
 
 # BBR + fq is best effort: containers and old kernels keep their defaults.
+# Clients keep one long-lived connection, so it must not fall back to slow
+# start whenever the user pauses between pages (tcp_slow_start_after_idle).
 enable_bbr(){
   local conf=/etc/sysctl.d/99-txlite-bbr.conf
+  { echo 'net.ipv4.tcp_slow_start_after_idle = 0' >/etc/sysctl.d/99-txlite-tcp.conf && chmod 644 /etc/sysctl.d/99-txlite-tcp.conf; } 2>/dev/null || true
+  sysctl -q -w net.ipv4.tcp_slow_start_after_idle=0 >/dev/null 2>&1 || true
   modprobe tcp_bbr >/dev/null 2>&1 || true
   if ! grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
     echo "提示：内核不支持 BBR，保持系统默认"; return 0
@@ -141,7 +145,7 @@ case "${1:-install}" in
     case "$ok" in y|Y) ;; *) echo "已取消"; exit 0;; esac
     systemctl disable --now txlite >/dev/null 2>&1 || true
     iptables_ports delete
-    rm -f "$UNIT" "$BIN" /etc/sysctl.d/99-txlite-bbr.conf /etc/modules-load.d/txlite-bbr.conf
+    rm -f "$UNIT" "$BIN" /etc/sysctl.d/99-txlite-bbr.conf /etc/sysctl.d/99-txlite-tcp.conf /etc/modules-load.d/txlite-bbr.conf
     systemctl daemon-reload
     rm -rf "$DIR"
     userdel txlite 2>/dev/null || true

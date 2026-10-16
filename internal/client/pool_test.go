@@ -99,6 +99,11 @@ func TestH2PoolRotationPreservesActiveBusiness(t *testing.T) {
 	if _, e = io.ReadFull(active, b); e != nil || b[0] != 'z' {
 		t.Fatal("active stream failed after rotation", e)
 	}
+	// Missing carriers are dialed in the background; let the pool fill up.
+	for deadline := time.Now().Add(3 * time.Second); m.Stats.H2Dials.Load() < 5 && time.Now().Before(deadline); {
+		exchange(t, m, "next.test:443")
+		time.Sleep(10 * time.Millisecond)
+	}
 	if m.Stats.H2Retired.Load() != 1 || m.Stats.H2Dials.Load() != 5 {
 		t.Fatal("unexpected carrier lifecycle", m.Stats.H2Retired.Load(), m.Stats.H2Dials.Load())
 	}

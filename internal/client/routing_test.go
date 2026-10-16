@@ -97,6 +97,7 @@ func TestBypassHTTPAndSOCKSReachOriginWithoutTunnel(t *testing.T) {
 	defer cancel()
 	stream, _ := global.openTCP(ctx, "203.0.113.10:80")
 	if stream != nil {
+		stream.Read(make([]byte, 1)) // fast open: wait for the server's answer
 		stream.Close()
 	}
 	if tunneled.Load() == 0 {
