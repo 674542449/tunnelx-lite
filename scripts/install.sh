@@ -21,7 +21,7 @@ case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) 
 
 download(){
   local base="https://github.com/$REPO/releases/latest/download" work want
-  work=$(mktemp -d); trap 'rm -rf "$work"' RETURN
+  work=$(mktemp -d); trap 'rm -rf "${work:-}"; trap - RETURN' RETURN
   echo "下载 txlite（linux-$arch）……"
   curl -fsSL --retry 3 -o "$work/txlite" "$base/txlite-linux-$arch"
   curl -fsSL --retry 3 -o "$work/SHA256SUMS" "$base/SHA256SUMS"
