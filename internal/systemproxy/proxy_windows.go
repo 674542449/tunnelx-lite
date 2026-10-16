@@ -181,6 +181,24 @@ func (m *Manager) Enabled() bool {
 	_, e := os.Stat(m.Path)
 	return e == nil
 }
+
+// Taken reports that our proxy is saved as set but another program has since
+// replaced or switched off the Windows proxy.
+func (m *Manager) Taken() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, e := os.Stat(m.Path); e != nil {
+		return false
+	}
+	k, e := registry.OpenKey(registry.CURRENT_USER, m.keyPath(), registry.QUERY_VALUE)
+	if e != nil {
+		return false
+	}
+	defer k.Close()
+	server, _, e1 := k.GetStringValue("ProxyServer")
+	enabled, _, e2 := k.GetIntegerValue("ProxyEnable")
+	return e1 != nil || e2 != nil || server != m.Proxy || enabled != 1
+}
 func refresh() {
 	p := windows.NewLazySystemDLL("wininet.dll").NewProc("InternetSetOptionW")
 	p.Call(0, 39, 0, 0)
@@ -196,7 +214,7 @@ func OpenBrowser(url string) error {
 }
 func ShowError(message string) {
 	m, _ := windows.UTF16PtrFromString(message)
-	t, _ := windows.UTF16PtrFromString("tunnelX")
+	t, _ := windows.UTF16PtrFromString("txlite")
 	windows.NewLazySystemDLL("user32.dll").NewProc("MessageBoxW").Call(0, uintptrPointer(m), uintptrPointer(t), 0x10)
 	runtime.KeepAlive(m)
 	runtime.KeepAlive(t)

@@ -83,6 +83,9 @@ func TestAnotherProxyToolNeverBlocksConnect(t *testing.T) {
 		t.Fatal("system proxy not set", err)
 	}
 	k.SetStringValue("ProxyServer", "127.0.0.1:10809") // another proxy tool takes over
+	if st := e.Status(); st["system_proxy_taken"] != true {
+		t.Fatal("status does not report the takeover")
+	}
 	if err = e.Disconnect(); err != nil {
 		t.Fatal("disconnect reported an error for another tool's proxy", err)
 	}

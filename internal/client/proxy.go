@@ -222,6 +222,7 @@ func (p *Proxy) socksConn(c net.Conn) {
 func (p *Proxy) relay(c net.Conn, r io.Reader, t *Tunnel) {
 	p.relayFlow(c, r, t, nil)
 }
+
 // Like Xray's connection policy: a flow with no traffic for relayIdle is closed,
 // and once one direction has finished the other may stay silent only for
 // halfCloseIdle. Without this, half-open flows keep their slot forever and the

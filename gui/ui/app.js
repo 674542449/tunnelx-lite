@@ -19,7 +19,7 @@ const connecting = () => status.connection_state === 'connecting';
 async function task(label, fn) {
   if (busy) return;
   busy = true; render();
-  try { await fn(); } catch (e) { log(label + '失败：' + errText(e), 'err'); }
+  try { await fn(); } catch (e) { const t = errText(e); if (t !== '已取消') log(label + '失败：' + t, 'err'); }
   finally { busy = false; await refresh(); }
 }
 
@@ -53,8 +53,10 @@ function render() {
   $('probe-all').disabled = busy || !servers.length;
   $('mode').value = pref.proxy_mode || 'bypass_cn';
   $('mode').disabled = busy || on || going;
-  $('system-proxy').textContent = '系统代理：' + (status.system_proxy ? '已设置' : on && pref.proxy_mode === 'tun' ? 'TUN 接管' : '未设置');
-  $('system-proxy').classList.toggle('sb-on', !!status.system_proxy);
+  const taken = status.system_proxy_taken === true, proxyOn = status.system_proxy === true && !taken;
+  $('system-proxy').textContent = '系统代理：' + (taken ? '已被其他程序修改' : proxyOn ? '已设置' : on && pref.proxy_mode === 'tun' ? 'TUN 接管' : '未设置');
+  $('system-proxy').classList.toggle('sb-on', proxyOn);
+  $('system-proxy').classList.toggle('sb-warn', taken);
   const state = status.connection_state || 'disconnected';
   $('state-dot').className = 'dot ' + state;
   $('state').textContent = going ? (stages[status.connection_stage] || '正在连接') : state === 'degraded' ? '连接异常' : on ? '已连接' : '未连接';
@@ -172,7 +174,7 @@ $('probe-all').onclick = () => task('测试延迟', async () => {
   log('延迟测试完成：' + ok + ' / ' + servers.length + ' 个可用', 'ok');
 });
 $('connect').onclick = () => task(connected() ? '断开' : '连接', async () => {
-  if (connected()) { const hadProxy = status.system_proxy === true; await bridge().Disconnect(); log(hadProxy ? '已断开，Windows 系统代理已恢复' : '已断开'); return; }
+  if (connected()) { const hadProxy = status.system_proxy === true && status.system_proxy_taken !== true; await bridge().Disconnect(); log(hadProxy ? '已断开，Windows 系统代理已恢复' : '已断开'); return; }
   await connectTo(selected);
 });
 $('cancel').onclick = () => bridge().CancelConnect().then(() => log('已取消连接'));

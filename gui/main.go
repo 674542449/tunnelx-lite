@@ -71,15 +71,16 @@ func (a *App) CopyShareLink(id string) error {
 	}
 	return rt.ClipboardSetText(a.ctx, link)
 }
-func (a *App) Rename(id, name string) error        { return a.engine.Rename(id, name) }
-func (a *App) Remove(id string) error              { return a.engine.Remove(id) }
+func (a *App) Rename(id, name string) error { return a.engine.Rename(id, name) }
+func (a *App) Remove(id string) error       { return a.engine.Remove(id) }
+
 // Connect always sets the Windows system proxy (except in TUN mode);
 // Disconnect restores it. There is no separate switch.
-func (a *App) Connect(id string) error { return a.engine.Connect(id, true) }
-func (a *App) Disconnect() error                   { return a.engine.Disconnect() }
-func (a *App) CancelConnect() error                { return a.engine.CancelConnect() }
-func (a *App) Probe(id string) (int64, error)      { return a.engine.Probe(id) }
-func (a *App) ProbeAll() []app.ProbeResult         { return a.engine.ProbeAll() }
+func (a *App) Connect(id string) error         { return a.engine.Connect(id, true) }
+func (a *App) Disconnect() error               { return a.engine.Disconnect() }
+func (a *App) CancelConnect() error            { return a.engine.CancelConnect() }
+func (a *App) Probe(id string) (int64, error)  { return a.engine.Probe(id) }
+func (a *App) ProbeAll() []app.ProbeResult     { return a.engine.ProbeAll() }
 func (a *App) SavePreferences(id string) error { return a.engine.SavePreferences(id) }
 func (a *App) SaveProxyMode(mode, exceptions string) error {
 	return a.engine.SaveProxyMode(mode, exceptions)
@@ -150,6 +151,9 @@ func (a *App) startup(ctx context.Context) {
 		rt.WindowMaximise(ctx)
 	}
 	a.engine.RestoreProxyAtStartup()
+	// Shutting down or signing out while connected must not leave Windows
+	// pointing at a proxy that is about to disappear.
+	watchSessionEnd(func() { _ = a.engine.ReleaseSystemProxy() })
 	go systray.Run(func() {
 		systray.SetIcon(trayIcon)
 		systray.SetTitle("txlite")

@@ -21,7 +21,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/tunmode"
 )
 
-const Version = "v0.1.6"
+const Version = "v0.1.7"
 
 type Settings struct {
 	SOCKS string `json:"socks_listen"`
@@ -171,7 +171,7 @@ func (e *Engine) Status() map[string]any {
 			state = "degraded"
 		}
 	}
-	s := map[string]any{"version": Version, "connected": e.mux != nil, "connection_state": state, "connection_stage": e.stage, "health": e.health, "preferences": e.preferences, "startup_warning": e.startupWarning, "node_name": e.nodeName, "node_id": e.nodeID, "system_proxy": e.system.Enabled(), "socks": e.settings.SOCKS, "http": e.settings.HTTP, "logs": filepath.Join(e.root, "logs"), "proxy_recovery_error": e.proxyRecoveryError, "server_count": len(e.servers)}
+	s := map[string]any{"version": Version, "connected": e.mux != nil, "connection_state": state, "connection_stage": e.stage, "health": e.health, "preferences": e.preferences, "startup_warning": e.startupWarning, "node_name": e.nodeName, "node_id": e.nodeID, "system_proxy": e.system.Enabled(), "system_proxy_taken": e.system.Taken(), "socks": e.settings.SOCKS, "http": e.settings.HTTP, "logs": filepath.Join(e.root, "logs"), "proxy_recovery_error": e.proxyRecoveryError, "server_count": len(e.servers)}
 	s["routing_rules"] = e.ruleInfo
 	s["recovering"] = e.recovering
 	s["recovery_attempt"] = e.recoveryAttempt
@@ -225,3 +225,11 @@ func (e *Engine) ConnLogs() []ConnLog {
 }
 
 func (e *Engine) Close() error { return e.Disconnect() }
+
+// ReleaseSystemProxy hands the Windows proxy back at once, for when the
+// session ends and there is no time for an orderly disconnect.
+func (e *Engine) ReleaseSystemProxy() error {
+	err := e.system.Restore()
+	e.setProxyError(err)
+	return err
+}
