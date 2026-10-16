@@ -18,6 +18,10 @@ import (
 	"github.com/apernet/quic-go"
 )
 
+// halfCloseLinger is how long a flow whose target has finished still waits for
+// the client's side to end before it is torn down.
+var halfCloseLinger = 30 * time.Second
+
 // ServeQUIC listens on the UDP port with the same number as the TCP listener.
 func (s *Server) ServeQUIC(ctx context.Context) error {
 	tlsCfg, e := s.Config.TLS()
@@ -77,6 +81,11 @@ func (s *Server) quicStream(conn *quic.Conn, st *quic.Stream, authed *atomic.Boo
 	defer st.CancelRead(0)
 	st.SetReadDeadline(time.Now().Add(10 * time.Second))
 	kind, token, target, e := wire.ReadQUICHeader(st)
+	if e != nil && authed.Load() {
+		// One stream the client abandoned must not take down every other
+		// flow of an authenticated connection.
+		return
+	}
 	if e != nil || s.Config.ManagedOnly || !s.auth.Valid([]string{"Bearer " + token}) {
 		conn.CloseWithError(0, "")
 		return
@@ -174,9 +183,14 @@ func (s *Server) quicStream(conn *quic.Conn, st *quic.Stream, authed *atomic.Boo
 	} else {
 		st.Close()
 	}
+	// The target has finished; give the client's upload a bounded time to end
+	// so a client that never closes its side cannot pin the stream forever.
 	select {
 	case <-up:
 	case <-ctx.Done():
+	case <-time.After(halfCloseLinger):
+		st.CancelRead(0)
+		<-up
 	}
 	if s.accessLog != nil {
 		s.accessLog.Info("proxy", slog.String("target", target), slog.String("proto", "tcp/quic"), slog.Int64("upload", upBytes.Load()), slog.Int64("download", downBytes.Load()), slog.Int64("duration_ms", time.Since(started).Milliseconds()))

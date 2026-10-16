@@ -153,3 +153,30 @@ func TestOldServerWithoutControlStream(t *testing.T) {
 		t.Fatal("control stream still sent to an old server")
 	}
 }
+
+// A malformed or abandoned stream on an authenticated connection must not
+// close the connection and every other flow on it.
+func TestBadStreamKeepsConnection(t *testing.T) {
+	echo := echoTCP(t)
+	link := quicServer(t, true, echo)
+	m := quicMux(t, link, "quic")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	live, e := m.OpenTCP(ctx, echo)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer live.Close()
+	roundTrip(t, live, "before")
+	st, e := m.quic.conn.OpenStreamSync(ctx)
+	if e != nil {
+		t.Fatal(e)
+	}
+	st.Write([]byte{9, 9}) // garbage, then abandon the stream
+	st.CancelWrite(0)
+	time.Sleep(300 * time.Millisecond)
+	roundTrip(t, live, "after")
+	if m.ActiveTransport() != "quic" {
+		t.Fatal("connection closed by one bad stream")
+	}
+}

@@ -251,14 +251,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 		r.Body.Close()
 	}
+	// HTTP/2 can only end the response by returning, which also stops reading
+	// the request. Once the target has finished, the client still gets its EOF
+	// promptly (close-delimited HTTP responses rely on it) after a short grace
+	// period for the last uploaded bytes.
 	select {
 	case <-up:
 	case <-r.Context().Done():
+	case <-time.After(h2EOFGrace):
 	}
 	if s.accessLog != nil {
 		s.accessLog.Info("proxy", "target", target, "proto", "tcp", "upload", upBytes.Load(), "download", downBytes.Load(), "duration_ms", time.Since(proxyStart).Milliseconds())
 	}
 }
+
+// h2EOFGrace bounds how long an HTTP/2 flow whose target has closed waits for
+// the client's upload before ending the response.
+var h2EOFGrace = 2 * time.Second
+
 func UDPAddress(u *url.URL) (string, error) {
 	p := strings.Split(u.EscapedPath(), "/")
 	if len(p) != 7 || p[1] != ".well-known" || p[2] != "masque" || p[3] != "udp" || p[6] != "" {
