@@ -53,8 +53,8 @@ function render() {
   $('probe-all').disabled = busy || !servers.length;
   $('mode').value = pref.proxy_mode || 'bypass_cn';
   $('mode').disabled = busy || on || going;
-  $('system-proxy').checked = pref.system_proxy !== false;
-  $('system-proxy').disabled = busy || pref.proxy_mode === 'tun';
+  $('system-proxy').textContent = '系统代理：' + (status.system_proxy ? '已设置' : on && pref.proxy_mode === 'tun' ? 'TUN 接管' : '未设置');
+  $('system-proxy').classList.toggle('sb-on', !!status.system_proxy);
   const state = status.connection_state || 'disconnected';
   $('state-dot').className = 'dot ' + state;
   $('state').textContent = going ? (stages[status.connection_stage] || '正在连接') : state === 'degraded' ? '连接异常' : on ? '已连接' : '未连接';
@@ -69,11 +69,11 @@ function render() {
 async function connectTo(id) {
   const pref = status.preferences || {};
   if (connected()) { if (status.node_id === id) return; await bridge().Disconnect(); }
-  await bridge().SavePreferences(id, pref.system_proxy !== false);
+  await bridge().SavePreferences(id);
   const name = servers.find(s => s.id === id)?.name || '';
   log('正在连接 ' + name + ' …');
   const watch = setInterval(refresh, 400);
-  try { await bridge().Connect(id, pref.system_proxy !== false); log('已连接 ' + name + '（' + $('mode').selectedOptions[0].text + (pref.proxy_mode !== 'tun' && pref.system_proxy !== false ? '，已设置系统代理' : '') + '）', 'ok'); }
+  try { await bridge().Connect(id); log('已连接 ' + name + '（' + $('mode').selectedOptions[0].text + (pref.proxy_mode !== 'tun' ? '，已设置 Windows 系统代理' : '') + '）', 'ok'); }
   finally { clearInterval(watch); }
 }
 
@@ -177,11 +177,6 @@ $('connect').onclick = () => task(connected() ? '断开' : '连接', async () =>
 });
 $('cancel').onclick = () => bridge().CancelConnect().then(() => log('已取消连接'));
 $('mode').onchange = () => task('切换路由', async () => { await bridge().SaveProxyMode($('mode').value, (status.preferences?.direct_domains || []).join('\n')); log('路由已切换为 ' + $('mode').selectedOptions[0].text + '，下次连接生效'); });
-$('system-proxy').onchange = () => { const on = $('system-proxy').checked; task('设置系统代理', async () => {
-  await bridge().SetSystemProxy(on);
-  if (connected()) log(on ? '已开启 Windows 系统代理' : '已关闭 Windows 系统代理（本地端口 SOCKS ' + status.socks + ' / HTTP ' + status.http + ' 仍可手动使用）', 'ok');
-  else log(on ? '连接时会自动设置 Windows 系统代理' : '连接时不修改 Windows 系统代理');
-}); };
 $('open-settings').onclick = openSettings;
 $('open-logs').onclick = () => bridge().OpenLogs().catch(e => log(errText(e), 'err'));
 $('clear-log').onclick = () => $('log').replaceChildren();

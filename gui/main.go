@@ -73,15 +73,14 @@ func (a *App) CopyShareLink(id string) error {
 }
 func (a *App) Rename(id, name string) error        { return a.engine.Rename(id, name) }
 func (a *App) Remove(id string) error              { return a.engine.Remove(id) }
-func (a *App) Connect(id string, proxy bool) error { return a.engine.Connect(id, proxy) }
+// Connect always sets the Windows system proxy (except in TUN mode);
+// Disconnect restores it. There is no separate switch.
+func (a *App) Connect(id string) error { return a.engine.Connect(id, true) }
 func (a *App) Disconnect() error                   { return a.engine.Disconnect() }
 func (a *App) CancelConnect() error                { return a.engine.CancelConnect() }
 func (a *App) Probe(id string) (int64, error)      { return a.engine.Probe(id) }
 func (a *App) ProbeAll() []app.ProbeResult         { return a.engine.ProbeAll() }
-func (a *App) SavePreferences(id string, proxy bool) error {
-	return a.engine.SavePreferences(id, proxy)
-}
-func (a *App) SetSystemProxy(enabled bool) error { return a.engine.SetSystemProxy(enabled) }
+func (a *App) SavePreferences(id string) error { return a.engine.SavePreferences(id) }
 func (a *App) SaveProxyMode(mode, exceptions string) error {
 	return a.engine.SaveProxyMode(mode, exceptions)
 }
@@ -140,7 +139,7 @@ func (a *App) toggleConnection() {
 		return
 	}
 	p, _ := s["preferences"].(app.Preferences)
-	if p.SelectedID == "" || a.engine.Connect(p.SelectedID, p.SystemProxy) != nil {
+	if p.SelectedID == "" || a.engine.Connect(p.SelectedID, true) != nil {
 		rt.WindowShow(a.ctx)
 	}
 }

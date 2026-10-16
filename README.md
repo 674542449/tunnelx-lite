@@ -63,10 +63,10 @@ INBOUND=ipv6 OUTBOUND=ipv6 bash <(curl -fsSL https://raw.githubusercontent.com/6
 
 1. 在服务器面板点「复制」，回到客户端按 **Ctrl+V**（或点「从剪贴板导入」）。
 2. 选中服务器，点「连接」或双击。
-3. 底部状态栏切换路由：**绕过大陆** / **全局代理** / **TUN 模式**；规则与 Clash Verge Rev 一致：绕过大陆按 `GEOSITE,private` → `GEOSITE,geolocation-!cn`（代理）→ `GEOSITE,cn` → `GEOIP,private/CN` 直连，其余走代理；全局代理除局域网外全部走代理；勾选「系统代理」后连接时自动设置 Windows 系统代理。
+3. 底部状态栏切换路由：**绕过大陆** / **全局代理** / **TUN 模式**；规则与 Clash Verge Rev 一致：绕过大陆按 `GEOSITE,private` → `GEOSITE,geolocation-!cn`（代理）→ `GEOSITE,cn` → `GEOIP,private/CN` 直连，其余走代理；全局代理除局域网外全部走代理；点「连接」会自动设置 Windows 系统代理，点「断开」恢复原来的设置（TUN 模式不设置系统代理）。
 
 - TUN 模式接管所有应用的 TCP / UDP，需要右键「以管理员身份运行」。
-- 不使用系统代理时，可手动把应用的代理设为 SOCKS5 `127.0.0.1:1080` 或 HTTP `127.0.0.1:8088`。
+- 不认系统代理的程序，可手动把它的代理设为 SOCKS5 `127.0.0.1:1080` 或 HTTP `127.0.0.1:8088`。
 - 右键服务器：测试延迟、复制分享链接、重命名、删除。
 - 设置里可以填写直连例外域名、更新分流规则、恢复系统代理、导出脱敏诊断报告。
 - 导入的服务器（含密钥）用 Windows DPAPI 加密保存在 `%LOCALAPPDATA%\txlite`。在程序目录新建 `portable` 文件夹即可改为便携模式。

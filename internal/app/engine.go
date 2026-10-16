@@ -21,7 +21,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/tunmode"
 )
 
-const Version = "v0.1.4"
+const Version = "v0.1.5"
 
 type Settings struct {
 	SOCKS string `json:"socks_listen"`
@@ -31,7 +31,6 @@ type Settings struct {
 
 type Preferences struct {
 	SelectedID    string   `json:"selected_id"`
-	SystemProxy   bool     `json:"system_proxy"`
 	ProxyMode     string   `json:"proxy_mode"`
 	DirectDomains []string `json:"direct_domains"`
 }
@@ -106,7 +105,7 @@ func New(root string, settings Settings) (*Engine, error) {
 	if settings.Web == "" {
 		settings.Web = "127.0.0.1:9080"
 	}
-	e := &Engine{root: root, settings: settings, preferences: Preferences{SystemProxy: true, ProxyMode: routing.Bypass}, stage: "disconnected", healthInterval: 30 * time.Second, healthTimeout: 5 * time.Second}
+	e := &Engine{root: root, settings: settings, preferences: Preferences{ProxyMode: routing.Bypass}, stage: "disconnected", healthInterval: 30 * time.Second, healthTimeout: 5 * time.Second}
 	var err error
 	e.rules, e.ruleInfo, err = routing.Load(e.statePath("routing-rules.json"))
 	if err != nil {
@@ -147,14 +146,14 @@ func (e *Engine) savePreferencesLocked(p Preferences) error {
 	return nil
 }
 
-func (e *Engine) SavePreferences(id string, systemProxy bool) error {
+func (e *Engine) SavePreferences(id string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if id != "" && e.findLocked(id) == nil {
 		return errors.New("服务器不存在")
 	}
 	p := e.preferences
-	p.SelectedID, p.SystemProxy = id, systemProxy
+	p.SelectedID = id
 	return e.savePreferencesLocked(p)
 }
 
@@ -226,34 +225,3 @@ func (e *Engine) ConnLogs() []ConnLog {
 }
 
 func (e *Engine) Close() error { return e.Disconnect() }
-
-// SetSystemProxy sets or clears the Windows system proxy immediately while a
-// non-TUN connection is up, and remembers the choice for future connections.
-func (e *Engine) SetSystemProxy(enabled bool) error {
-	if !e.lifecycle.TryLock() {
-		return errors.New("正在连接或断开，请稍后再试")
-	}
-	defer e.lifecycle.Unlock()
-	e.mu.Lock()
-	live := e.mux != nil && (e.proxy == nil || !e.proxy.TUN)
-	e.mu.Unlock()
-	if live {
-		var err error
-		if enabled {
-			if !e.system.Enabled() {
-				err = e.system.Enable()
-			}
-		} else {
-			err = e.system.Restore()
-		}
-		e.setProxyError(err)
-		if err != nil {
-			return err
-		}
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	p := e.preferences
-	p.SystemProxy = enabled
-	return e.savePreferencesLocked(p)
-}

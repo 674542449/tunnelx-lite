@@ -14,7 +14,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/routing"
 )
 
-func TestSystemProxySwitchAppliesWhileConnected(t *testing.T) {
+func TestConnectSetsAndDisconnectRestoresSystemProxy(t *testing.T) {
 	keyPath := fmt.Sprintf(`Software\txlite-tests\%d`, time.Now().UnixNano())
 	k, _, err := registry.CreateKey(registry.CURRENT_USER, keyPath, registry.ALL_ACCESS)
 	if err != nil {
@@ -41,31 +41,21 @@ func TestSystemProxySwitchAppliesWhileConnected(t *testing.T) {
 	id := e.Servers()[0].ID
 	e.SaveProxyMode(routing.Global, "")
 
-	if err = e.SetSystemProxy(true); err != nil || proxyServer() != "old.example:3128" {
-		t.Fatal("switch while disconnected must only save the preference", err, proxyServer())
-	}
-	if err = e.Connect(id, false); err != nil {
-		t.Fatal(err)
-	}
-	if proxyServer() != "old.example:3128" {
-		t.Fatal("connect without system proxy changed the registry")
-	}
-	if err = e.SetSystemProxy(true); err != nil {
+	if err = e.Connect(id, true); err != nil {
 		t.Fatal(err)
 	}
 	override, _, _ := k.GetStringValue("ProxyOverride")
 	if enabled, _, _ := k.GetIntegerValue("ProxyEnable"); proxyServer() != e.Settings().HTTP || enabled != 1 || !strings.Contains(override, "192.168.*") || !strings.Contains(override, "<local>") {
-		t.Fatal("system proxy not applied immediately or LAN not excluded", proxyServer(), override)
+		t.Fatal("connect did not set the system proxy or LAN not excluded", proxyServer(), override)
 	}
-	if err = e.SetSystemProxy(false); err != nil || proxyServer() != "old.example:3128" {
-		t.Fatal("clearing the system proxy did not restore the original", err, proxyServer())
+	if e.Status()["system_proxy"] != true {
+		t.Fatal("status does not report the system proxy")
 	}
-	if e.Status()["preferences"].(Preferences).SystemProxy {
-		t.Fatal("preference not saved")
-	}
-	e.SetSystemProxy(true)
 	if err = e.Disconnect(); err != nil || proxyServer() != "old.example:3128" || e.system.Enabled() {
 		t.Fatal("disconnect did not restore the original proxy", err, proxyServer())
+	}
+	if enabled, _, _ := k.GetIntegerValue("ProxyEnable"); enabled != 0 {
+		t.Fatal("disconnect left the system proxy enabled")
 	}
 }
 

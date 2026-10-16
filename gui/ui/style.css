@@ -39,6 +39,7 @@ td.c-act{color:var(--good)}
 .statusbar{display:flex;align-items:center;gap:14px;padding:4px 10px;background:var(--bar);border-top:1px solid var(--line);white-space:nowrap}
 .sb-item{display:inline-flex;align-items:center;gap:5px;overflow:hidden;text-overflow:ellipsis}
 .statusbar select{padding:1px 4px}
+.sb-on{color:var(--good)}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
 .dot.connected{background:var(--good)}.dot.connecting{background:var(--warm)}.dot.degraded{background:var(--bad)}
 .mono{font-family:Consolas,"Cascadia Mono",monospace}.muted{color:var(--muted)}
