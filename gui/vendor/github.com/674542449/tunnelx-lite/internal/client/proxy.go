@@ -222,15 +222,70 @@ func (p *Proxy) socksConn(c net.Conn) {
 func (p *Proxy) relay(c net.Conn, r io.Reader, t *Tunnel) {
 	p.relayFlow(c, r, t, nil)
 }
+// Like Xray's connection policy: a flow with no traffic for relayIdle is closed,
+// and once one direction has finished the other may stay silent only for
+// halfCloseIdle. Without this, half-open flows keep their slot forever and the
+// proxy eventually refuses every new connection.
+var relayIdle, halfCloseIdle = 5 * time.Minute, 30 * time.Second
+
+type idleWatch struct {
+	mu    sync.Mutex
+	last  time.Time
+	limit time.Duration
+	timer *time.Timer
+}
+
+func newIdleWatch(limit time.Duration, expire func()) *idleWatch {
+	w := &idleWatch{last: time.Now(), limit: limit}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.timer = time.AfterFunc(limit, func() {
+		w.mu.Lock()
+		left := w.limit - time.Since(w.last)
+		if left > 0 {
+			w.timer.Reset(left)
+		}
+		w.mu.Unlock()
+		if left <= 0 {
+			expire()
+		}
+	})
+	return w
+}
+func (w *idleWatch) touch() { w.mu.Lock(); w.last = time.Now(); w.mu.Unlock() }
+func (w *idleWatch) shorten(limit time.Duration) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if limit < w.limit {
+		w.limit, w.last = limit, time.Now()
+		w.timer.Reset(limit)
+	}
+}
+func (w *idleWatch) stop() { w.timer.Stop() }
+
+type touchWriter struct {
+	io.Writer
+	w *idleWatch
+}
+
+func (t touchWriter) Write(b []byte) (int, error) { t.w.touch(); return t.Writer.Write(b) }
+
 func (p *Proxy) relayFlow(c net.Conn, r io.Reader, t *Tunnel, flow *flowLog) {
 	p.Mux.Stats.Active.Add(1)
 	defer p.Mux.Stats.Active.Add(-1)
 	cleanup := context.AfterFunc(p.ctx, func() { c.Close(); t.Close() })
 	defer cleanup()
+	idle := newIdleWatch(relayIdle, func() {
+		flow.event("flow_idle_closed", nil)
+		c.Close()
+		t.Close()
+	})
+	defer idle.stop()
 	up := make(chan error, 1)
 	go func() {
-		_, e := io.CopyBuffer(flow.wrap(meterWriter{t, &p.Mux.Stats.Uploaded}, true), r, make([]byte, 32<<10))
+		_, e := io.CopyBuffer(touchWriter{flow.wrap(meterWriter{t, &p.Mux.Stats.Uploaded}, true), idle}, r, make([]byte, 32<<10))
 		flow.directionEnd("app_to_target", e)
+		idle.shorten(halfCloseIdle)
 		t.CloseWrite()
 		if e != nil {
 			t.Close()
@@ -238,8 +293,9 @@ func (p *Proxy) relayFlow(c net.Conn, r io.Reader, t *Tunnel, flow *flowLog) {
 		}
 		up <- e
 	}()
-	_, e := io.CopyBuffer(flow.wrap(meterWriter{c, &p.Mux.Stats.Downloaded}, false), t, make([]byte, 32<<10))
+	_, e := io.CopyBuffer(touchWriter{flow.wrap(meterWriter{c, &p.Mux.Stats.Downloaded}, false), idle}, t, make([]byte, 32<<10))
 	flow.directionEnd("target_to_app", e)
+	idle.shorten(halfCloseIdle)
 	if tcp, ok := c.(*net.TCPConn); ok {
 		tcp.CloseWrite()
 	}

@@ -131,7 +131,9 @@ func (m *Mux) h2(ctx context.Context) (*http2.ClientConn, error) {
 			usable = append(usable, entry)
 		}
 	}
-	if len(usable) >= m.Config.H2Connections || len(m.h2Pool) >= 2*m.Config.H2Connections {
+	// Each carrier admits a limited number of streams (128 on txlite servers);
+	// grow the pool instead of refusing new flows when every carrier is busy.
+	if len(usable) >= m.Config.H2Connections || len(m.h2Pool) >= max(2*m.Config.H2Connections, 8) {
 		for i := 0; i < len(usable); i++ {
 			entry := usable[m.h2Cursor%uint64(len(usable))]
 			m.h2Cursor++

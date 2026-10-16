@@ -78,5 +78,7 @@ func Parse(raw string) (Link, error) {
 // Client builds the kernel client configuration; ip must be a literal address
 // (callers resolve domain hosts first).
 func (l Link) Client(ip string) config.Client {
-	return config.Client{ServerName: l.ServerName, ServerIP: ip, Port: l.Port, Token: l.Token, Transport: "h2", Privacy: "strict", ECHConfig: l.ECHConfig, CertPin: l.CertPin}
+	// The server may spend up to 10s dialing a slow target, so wait longer than
+	// that for CONNECT; the system proxy carries every app, so allow 1024 flows.
+	return config.Client{ServerName: l.ServerName, ServerIP: ip, Port: l.Port, Token: l.Token, Transport: "h2", Privacy: "strict", ECHConfig: l.ECHConfig, CertPin: l.CertPin, ConnectTimeout: 15, MaxConnections: 1024}
 }

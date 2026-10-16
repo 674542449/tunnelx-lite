@@ -188,13 +188,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.udp(w, r, addresses[0], p)
 		return
 	}
-	var conn net.Conn
-	for _, ip := range addresses {
-		conn, e = (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port))
-		if e == nil {
-			break
-		}
-	}
+	conn, e := dialTarget(ctx, addresses, port)
 	if e != nil {
 		status = 502
 		if errors.Is(e, context.DeadlineExceeded) || ctx.Err() != nil {
@@ -620,5 +614,64 @@ func outboundOrder(ips []net.IP, policy string) []net.IP {
 		return append(v6, v4...)
 	default:
 		return append(v4, v6...)
+	}
+}
+
+// dialTarget races the admitted addresses, starting the next one every 250ms
+// (RFC 8305 style) or as soon as all started attempts failed. A blackholed
+// IPv6 route therefore costs 250ms instead of the whole dial timeout.
+func dialTarget(ctx context.Context, ips []net.IP, port string) (net.Conn, error) {
+	if len(ips) > 8 {
+		ips = ips[:8]
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan dialResult, len(ips))
+	started, failed := 0, 0
+	var lastErr error
+	next := time.NewTimer(0)
+	defer next.Stop()
+	for {
+		select {
+		case <-next.C:
+			ip := ips[started]
+			started++
+			go func() {
+				c, e := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port))
+				results <- dialResult{c, e}
+			}()
+			if started < len(ips) {
+				next.Reset(250 * time.Millisecond)
+			}
+		case r := <-results:
+			if r.e == nil {
+				go closeLosers(results, started-failed-1)
+				return r.c, nil
+			}
+			failed, lastErr = failed+1, r.e
+			if failed == len(ips) {
+				return nil, lastErr
+			}
+			if failed == started {
+				next.Reset(0)
+			}
+		case <-ctx.Done():
+			go closeLosers(results, started-failed)
+			return nil, ctx.Err()
+		}
+	}
+}
+
+type dialResult struct {
+	c net.Conn
+	e error
+}
+
+// closeLosers closes connections that finished after another address won.
+func closeLosers(results <-chan dialResult, pending int) {
+	for ; pending > 0; pending-- {
+		if r := <-results; r.c != nil {
+			r.c.Close()
+		}
 	}
 }
