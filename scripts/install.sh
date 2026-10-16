@@ -73,13 +73,34 @@ UNIT
   chmod 644 "$UNIT"
 }
 
+ports(){ python3 -c "import json;c=json.load(open('$DIR/config.json'));print(c['port'],c['panel_port'])" 2>/dev/null || true; }
+
+# iptables_ports insert|delete: images such as Oracle Cloud's end INPUT with a
+# REJECT rule, so a new port stays closed until it is accepted before that rule.
+iptables_ports(){
+  local action=$1 fw p changed=""
+  for fw in iptables ip6tables; do
+    command -v "$fw" >/dev/null || continue
+    for p in $(ports); do
+      if test "$action" = insert; then
+        "$fw" -S INPUT 2>/dev/null | grep -q -- '-j REJECT' || continue
+        "$fw" -C INPUT -p tcp --dport "$p" -m comment --comment txlite -j ACCEPT 2>/dev/null && continue
+        "$fw" -I INPUT -p tcp --dport "$p" -m comment --comment txlite -j ACCEPT 2>/dev/null && { echo "$fw 已放行 $p/tcp"; changed=1; }
+      else
+        while "$fw" -D INPUT -p tcp --dport "$p" -m comment --comment txlite -j ACCEPT 2>/dev/null; do changed=1; done
+      fi
+    done
+  done
+  if test -n "$changed" && command -v netfilter-persistent >/dev/null; then netfilter-persistent save >/dev/null 2>&1 || true; fi
+}
+
 open_firewall(){
   local port panel
-  port=$(python3 -c "import json;print(json.load(open('$DIR/config.json'))['port'])" 2>/dev/null || true)
-  panel=$(python3 -c "import json;print(json.load(open('$DIR/config.json'))['panel_port'])" 2>/dev/null || true)
+  read -r port panel <<<"$(ports)"
   if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
     for p in $port $panel; do ufw allow "$p/tcp" >/dev/null && echo "ufw 已放行 $p/tcp"; done
   fi
+  iptables_ports insert
   echo "如果使用云服务器，请在安全组放行 TCP $port（代理）和 $panel（面板）。"
 }
 
@@ -119,6 +140,7 @@ case "${1:-install}" in
     read -rp "确定卸载 txlite？配置和密钥会一并删除，旧分享链接永久失效 [y/N]: " ok </dev/tty
     case "$ok" in y|Y) ;; *) echo "已取消"; exit 0;; esac
     systemctl disable --now txlite >/dev/null 2>&1 || true
+    iptables_ports delete
     rm -f "$UNIT" "$BIN" /etc/sysctl.d/99-txlite-bbr.conf /etc/modules-load.d/txlite-bbr.conf
     systemctl daemon-reload
     rm -rf "$DIR"

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/674542449/tunnelx-lite/internal/config"
@@ -35,6 +37,9 @@ type Runtime struct {
 	base    traffic // persisted totals minus what srv has counted in this run
 	logs    *ring
 	auth    sessions
+	// proxyErr is set when the proxy listener could not start; the panel keeps
+	// running so the owner can pick another port or inbound family.
+	proxyErr atomic.Value
 }
 
 func Open(d Dir) (*Runtime, error) {
@@ -58,6 +63,9 @@ func Open(d Dir) (*Runtime, error) {
 	}
 	return r, nil
 }
+
+// ProxyError is empty while the proxy listener is serving.
+func (r *Runtime) ProxyError() string { s, _ := r.proxyErr.Load().(string); return s }
 
 func (r *Runtime) Totals() traffic {
 	r.mu.Lock()
@@ -87,8 +95,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 		return e
 	}
 	panel := &http.Server{Addr: ":" + strconv.Itoa(r.cfg.PanelPort), Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}, ErrorLog: log.New(io.Discard, "", 0)}
-	errs := make(chan error, 2)
-	go func() { errs <- r.srv.Serve(ctx) }()
+	proxyErrs, errs := make(chan error, 1), make(chan error, 1)
+	go func() { proxyErrs <- r.srv.Serve(ctx) }()
 	go func() { errs <- panel.ListenAndServeTLS("", "") }()
 	log.Printf("txlite %s 已启动：代理端口 %d，面板端口 %d", Version, r.cfg.Port, r.cfg.PanelPort)
 	tick := time.NewTicker(30 * time.Second)
@@ -99,6 +107,16 @@ func (r *Runtime) Run(ctx context.Context) error {
 			panel.Close()
 			r.persist()
 			return nil
+		case e = <-proxyErrs:
+			if ctx.Err() != nil {
+				continue
+			}
+			if e == nil {
+				e = errors.New("listener stopped")
+			}
+			msg := fmt.Sprintf("代理端口 %d 启动失败：%v。面板仍可使用，请在设置里更换端口或入站方式", r.cfg.Port, e)
+			r.proxyErr.Store(msg)
+			log.Print(msg)
 		case e = <-errs:
 			panel.Close()
 			r.persist()

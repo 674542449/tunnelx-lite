@@ -34,6 +34,9 @@ type Server struct {
 	Access         AccessController
 	dns            *dnsCache
 	accessLog      *slog.Logger
+	// upLimit and downLimit apply BandwidthLimit to the whole server, so a
+	// client cannot exceed it by opening more connections.
+	upLimit, downLimit *Limiter
 }
 
 func New(c config.Server) (*Server, error) {
@@ -51,6 +54,9 @@ func New(c config.Server) (*Server, error) {
 		s.Resolver = s.dns.Lookup
 	}
 	_ = tlsCfg
+	if c.BandwidthLimit > 0 {
+		s.upLimit, s.downLimit = NewLimiter(c.BandwidthLimit), NewLimiter(c.BandwidthLimit)
+	}
 	return s, nil
 }
 
@@ -556,7 +562,7 @@ func (r throttledReader) Read(b []byte) (int, error) {
 }
 
 // limiters returns the upload and download limiters for one stream. Managed
-// accounts share theirs across streams; the node-wide setting is per stream.
+// accounts share theirs across streams; the server-wide limit is shared too.
 func (s *Server) limiters(ctx context.Context) (up, down *Limiter) {
 	if p := permit(ctx); p != nil {
 		if lp, ok := p.(LimitedPermit); ok {
@@ -568,10 +574,7 @@ func (s *Server) limiters(ctx context.Context) (up, down *Limiter) {
 			return up, down
 		}
 	}
-	if v := s.Config.BandwidthLimit; v > 0 {
-		return NewLimiter(v), NewLimiter(v)
-	}
-	return nil, nil
+	return s.upLimit, s.downLimit
 }
 
 type countReader struct {

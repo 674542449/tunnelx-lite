@@ -66,7 +66,7 @@
             <option value="ipv6">仅 IPv6</option>
           </select>
         </label>
-        <label>限速 Mbps（0 表示不限）<input name="bandwidth_mbps" type="number" min="0" max="8589" step="any" required></label>
+        <label>限速 Mbps（整台服务器共享，0 表示不限）<input name="bandwidth_mbps" type="number" min="0" max="8589" step="any" required></label>
         <label class="wide">自定义分享地址（每行一个 IP 或域名，留空则自动使用公网 IPv4 / IPv6）<textarea name="hosts" rows="2"></textarea></label>
         <div class="wide actions"><button type="submit" class="primary">保存设置</button><span class="muted">修改端口、入站 / 出站方式或限速后服务会自动重启</span></div>
       </form>

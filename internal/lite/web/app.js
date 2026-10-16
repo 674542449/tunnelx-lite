@@ -22,7 +22,8 @@ async function showApp() { $('login').hidden = true; $('app').hidden = false; aw
 
 async function refreshStatus() {
   const s = await api('status');
-  $('server-name').textContent = s.name; $('version').textContent = s.version; $('state-dot').className = 'dot ok';
+  $('server-name').textContent = s.name; $('version').textContent = s.version; $('state-dot').className = 'dot ' + (s.proxy_error ? 'bad' : 'ok');
+  if (s.proxy_error) notice(s.proxy_error, true);
   $('uptime').textContent = duration(s.uptime); $('active').textContent = s.active;
   $('up').textContent = bytes(s.uploaded); $('down').textContent = bytes(s.downloaded);
   const now = Date.now();

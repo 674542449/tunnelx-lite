@@ -205,7 +205,7 @@ func (r *Runtime) api(w http.ResponseWriter, req *http.Request, api, session, pr
 		ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
 		v4, v6 := detectIPs(ctx)
 		cancel()
-		reply(w, 200, map[string]any{"version": Version, "name": c.Name, "uptime": int64(time.Since(r.started).Seconds()), "active": r.srv.Active.Load(), "uploaded": t.Uploaded, "downloaded": t.Downloaded, "port": c.Port, "panel_port": c.PanelPort, "inbound": c.Inbound, "outbound_ip": c.OutboundIP, "bandwidth_limit": c.BandwidthLimit, "ipv4": v4, "ipv6": v6, "system": systemInfo()})
+		reply(w, 200, map[string]any{"version": Version, "name": c.Name, "uptime": int64(time.Since(r.started).Seconds()), "active": r.srv.Active.Load(), "uploaded": t.Uploaded, "downloaded": t.Downloaded, "port": c.Port, "panel_port": c.PanelPort, "inbound": c.Inbound, "outbound_ip": c.OutboundIP, "bandwidth_limit": c.BandwidthLimit, "ipv4": v4, "ipv6": v6, "system": systemInfo(), "proxy_error": r.ProxyError()})
 	case api == "links" && req.Method == "GET":
 		reply(w, 200, r.links(req.Context()))
 	case api == "qr" && req.Method == "GET":
@@ -284,10 +284,24 @@ func (r *Runtime) saveSettings(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	old := r.config()
-	if b.Port != old.Port {
-		l, e := net.Listen("tcp", ":"+strconv.Itoa(b.Port))
+	// A listener the kernel refuses would leave the proxy down after the
+	// restart, so try the new port and address family first.
+	network := map[string]string{"ipv4": "tcp4", "ipv6": "tcp6"}[b.Inbound]
+	if network == "" {
+		network = "tcp"
+	}
+	if b.Port != old.Port || b.Inbound != old.Inbound {
+		addr := ":0"
+		if b.Port != old.Port {
+			addr = ":" + strconv.Itoa(b.Port)
+		}
+		l, e := net.Listen(network, addr)
 		if e != nil {
-			fail(w, 400, "端口 "+strconv.Itoa(b.Port)+" 已被占用或无权使用")
+			if b.Port != old.Port {
+				fail(w, 400, "端口 "+strconv.Itoa(b.Port)+" 已被占用或无权使用")
+			} else {
+				fail(w, 400, "本机系统不支持所选的入站方式")
+			}
 			return
 		}
 		l.Close()
@@ -296,6 +310,17 @@ func (r *Runtime) saveSettings(w http.ResponseWriter, req *http.Request) {
 	for _, h := range b.Hosts {
 		if h = strings.TrimSpace(h); h != "" {
 			hosts = append(hosts, h)
+		}
+	}
+	// IPv6-only modes on a server without working public IPv6 would cut off
+	// every client; refuse them unless the owner supplies their own address.
+	if (b.Inbound == "ipv6" && b.Inbound != old.Inbound && len(hosts) == 0) || (b.OutboundIP == "ipv6" && b.OutboundIP != old.OutboundIP) {
+		ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
+		_, v6 := detectIPs(ctx)
+		cancel()
+		if v6 == "" {
+			fail(w, 400, "没有检测到可用的公网 IPv6，不能设为仅 IPv6；如确有 IPv6，请先在自定义分享地址填写")
+			return
 		}
 	}
 	limit := int64(math.Round(b.BandwidthMbps * 125000))

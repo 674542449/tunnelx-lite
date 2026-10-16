@@ -53,3 +53,12 @@ func TestLimiterWaitStopsOnCancel(t *testing.T) {
 		t.Fatal("nil limiter must not throttle")
 	}
 }
+
+func TestBandwidthLimitIsServerWide(t *testing.T) {
+	s := &Server{upLimit: NewLimiter(1 << 20), downLimit: NewLimiter(1 << 20)}
+	up1, down1 := s.limiters(context.Background())
+	up2, down2 := s.limiters(context.Background())
+	if up1 == nil || up1 != up2 || down1 != down2 {
+		t.Fatal("each stream got its own limiter; more connections would multiply the limit")
+	}
+}

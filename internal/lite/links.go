@@ -54,10 +54,16 @@ var ipCache struct {
 
 // PublicIPs asks external echo services over each address family, because
 // cloud servers usually only see a private address on their interfaces.
+// Results are cached for 10 minutes, failed lookups for 2, so the panel
+// stays responsive on servers whose IPv6 route is broken.
 func PublicIPs(ctx context.Context) (v4, v6 string) {
 	ipCache.Lock()
 	defer ipCache.Unlock()
-	if time.Since(ipCache.checked) < 10*time.Minute && (ipCache.v4 != "" || ipCache.v6 != "") {
+	ttl := 10 * time.Minute
+	if ipCache.v4 == "" && ipCache.v6 == "" {
+		ttl = 2 * time.Minute
+	}
+	if !ipCache.checked.IsZero() && time.Since(ipCache.checked) < ttl {
 		return ipCache.v4, ipCache.v6
 	}
 	var wg sync.WaitGroup
@@ -78,25 +84,38 @@ func PublicIPs(ctx context.Context) (v4, v6 string) {
 	return v4, v6
 }
 
+// lookupIP asks all echo services at once and takes the first valid answer.
 func lookupIP(ctx context.Context, network string, urls []string) string {
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	dialer := &net.Dialer{Timeout: 4 * time.Second}
 	c := &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
 		return dialer.DialContext(ctx, network, addr)
 	}}}
 	defer c.CloseIdleConnections()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	found := make(chan string, len(urls))
 	for _, u := range urls {
-		req, _ := http.NewRequestWithContext(ctx, "GET", u, nil)
-		res, e := c.Do(req)
-		if e != nil {
-			continue
+		go func() {
+			req, _ := http.NewRequestWithContext(ctx, "GET", u, nil)
+			res, e := c.Do(req)
+			if e != nil {
+				found <- ""
+				return
+			}
+			b, _ := io.ReadAll(io.LimitReader(res.Body, 64))
+			res.Body.Close()
+			ip := net.ParseIP(strings.TrimSpace(string(b)))
+			if ip == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() || (network == "tcp4") != (ip.To4() != nil) {
+				found <- ""
+				return
+			}
+			found <- ip.String()
+		}()
+	}
+	for range urls {
+		if ip := <-found; ip != "" {
+			return ip
 		}
-		b, _ := io.ReadAll(io.LimitReader(res.Body, 64))
-		res.Body.Close()
-		ip := net.ParseIP(strings.TrimSpace(string(b)))
-		if ip == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() || (network == "tcp4") != (ip.To4() != nil) {
-			continue
-		}
-		return ip.String()
 	}
 	return ""
 }
