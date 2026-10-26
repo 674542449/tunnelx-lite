@@ -1,6 +1,9 @@
 package lite
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestInboundFamilyShapesListenerAndLinks(t *testing.T) {
 	c := Config{Name: "n", Port: 443, PanelPort: 8443, PanelPath: "abcdefghij", Token: NewToken(), InnerName: "a.invalid"}
@@ -31,5 +34,17 @@ func TestInboundFamilyShapesListenerAndLinks(t *testing.T) {
 	c.Inbound = "both"
 	if c.Validate() == nil {
 		t.Fatal("unknown inbound accepted")
+	}
+}
+
+// The panel allows 48 characters; Chinese names must not be measured in bytes.
+func TestNameLimitCountsCharacters(t *testing.T) {
+	c := Config{Name: strings.Repeat("香", 48), Port: 443, PanelPort: 8443, PanelPath: "abcdefghij", Token: NewToken()}
+	if e := c.Validate(); e != nil {
+		t.Fatal(e)
+	}
+	c.Name += "港"
+	if c.Validate() == nil {
+		t.Fatal("49-character name accepted")
 	}
 }

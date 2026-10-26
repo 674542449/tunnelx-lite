@@ -1,3 +1,5 @@
 *.sh text eol=lf
 *.go text eol=lf
+# Routing lists are pinned by SHA-256 in manifest.json; CRLF checkouts break the hashes.
+*.list text eol=lf
 vendor/** -diff linguist-vendored

@@ -69,8 +69,9 @@ func Parse(raw string) (Link, error) {
 	if l.Name == "" {
 		l.Name = l.Host
 	}
-	if len(l.Name) > 64 {
-		l.Name = l.Name[:64]
+	// Cut by characters: a byte cut can split a Chinese name mid-character.
+	if r := []rune(l.Name); len(r) > 64 {
+		l.Name = string(r[:64])
 	}
 	return l, nil
 }

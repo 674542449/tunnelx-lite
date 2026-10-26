@@ -92,12 +92,13 @@ func (p *pendingBody) resolve(body io.ReadCloser, err error) {
 	used := false
 	p.once.Do(func() {
 		p.mu.Lock()
+		// A body that arrives after Close stays in the parameter so it is closed below.
 		if p.closed && body != nil {
-			body, err = nil, net.ErrClosed
+			p.body, p.err = nil, net.ErrClosed
 		} else {
+			p.body, p.err = body, err
 			used = body != nil
 		}
-		p.body, p.err = body, err
 		p.mu.Unlock()
 		close(p.ready)
 	})

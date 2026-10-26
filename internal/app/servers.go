@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/674542449/tunnelx-lite/internal/fsutil"
 	"github.com/674542449/tunnelx-lite/internal/share"
@@ -141,7 +142,7 @@ func (e *Engine) Import(text string) (added int, updated int, err error) {
 
 func (e *Engine) Rename(id, name string) error {
 	name = strings.TrimSpace(name)
-	if name == "" || len(name) > 64 {
+	if name == "" || utf8.RuneCountInString(name) > 64 {
 		return errors.New("名称需要 1 到 64 个字符")
 	}
 	e.mu.Lock()

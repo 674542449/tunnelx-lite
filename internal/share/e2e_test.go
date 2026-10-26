@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,5 +153,13 @@ func TestParseRejectsBrokenLinksAndKeepsIPv6(t *testing.T) {
 		if _, err := Parse(bad); err == nil {
 			t.Fatal("accepted broken link", bad)
 		}
+	}
+}
+
+func TestParseCutsLongNamesByCharacter(t *testing.T) {
+	link := Link{Name: strings.Repeat("测", 70), Host: "203.0.113.1", Port: 443, Token: token(t), ServerName: "edge.txlite.invalid", ECHConfig: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef")), CertPin: base64.RawURLEncoding.EncodeToString(make([]byte, 32))}
+	got, err := Parse(link.String())
+	if err != nil || got.Name != strings.Repeat("测", 64) {
+		t.Fatal("long name not cut on a character boundary", got.Name, err)
 	}
 }

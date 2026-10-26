@@ -54,6 +54,7 @@ function render() {
   $('probe-all').disabled = busy || !servers.length;
   $('mode').value = pref.proxy_mode || 'bypass_cn';
   $('mode').disabled = busy || on || going;
+  $('mode').title = on || going ? '断开连接后才能切换路由' : '';
   const taken = status.system_proxy_taken === true, proxyOn = status.system_proxy === true && !taken;
   $('system-proxy').textContent = '系统代理：' + (taken ? '已被其他程序修改' : proxyOn ? '已设置' : on && pref.proxy_mode === 'tun' ? 'TUN 接管' : '未设置');
   $('system-proxy').classList.toggle('sb-on', proxyOn);
@@ -199,7 +200,16 @@ $('connect').onclick = () => task(connected() ? '断开' : '连接', async () =>
   await connectTo(selected);
 });
 $('cancel').onclick = () => bridge().CancelConnect().then(() => log('已取消连接'));
-$('mode').onchange = () => task('切换路由', async () => { await bridge().SaveProxyMode($('mode').value, (status.preferences?.direct_domains || []).join('\n')); log('路由已切换为 ' + $('mode').selectedOptions[0].text + '，下次连接生效'); });
+$('mode').onchange = () => {
+  // task() re-renders before running, which puts the saved mode back into the select: read the choice first.
+  const mode = $('mode').value, name = $('mode').selectedOptions[0].text, tun = status.tun || {};
+  task('切换路由', async () => {
+    await bridge().SaveProxyMode(mode, (status.preferences?.direct_domains || []).join('\n'));
+    log('路由已切换为 ' + name + '，下次连接生效');
+    if (mode === 'tun' && tun.supported && !tun.elevated) log('TUN 模式需要管理员权限：请退出客户端，右键「以管理员身份运行」后再连接', 'err');
+    else if (mode === 'tun' && tun.supported && !tun.assets_ready) log(tun.error || '缺少 TUN 组件，请完整解压客户端安装包', 'err');
+  });
+};
 $('open-settings').onclick = openSettings;
 $('open-logs').onclick = () => bridge().OpenLogs().catch(e => log(errText(e), 'err'));
 $('clear-log').onclick = () => $('log').replaceChildren();

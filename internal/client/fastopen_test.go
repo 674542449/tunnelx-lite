@@ -107,3 +107,22 @@ func TestFastOpenCloseBeforeAnswer(t *testing.T) {
 		t.Fatal("Close did not release a reader waiting for the answer")
 	}
 }
+
+// An answer that arrives while Close is running must not leak its body.
+func TestPendingBodyClosesLateBody(t *testing.T) {
+	p := &pendingBody{ready: make(chan struct{})}
+	p.closed = true // Close has marked the tunnel but not yet resolved it
+	body := &closeTracker{}
+	p.resolve(body, nil)
+	if !body.closed {
+		t.Fatal("late response body was not closed")
+	}
+	if _, e := p.Read(make([]byte, 1)); e == nil {
+		t.Fatal("closed tunnel returned data")
+	}
+}
+
+type closeTracker struct{ closed bool }
+
+func (c *closeTracker) Read([]byte) (int, error) { return 0, io.EOF }
+func (c *closeTracker) Close() error             { c.closed = true; return nil }

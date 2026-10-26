@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/674542449/tunnelx-lite/internal/config"
 )
@@ -48,7 +49,7 @@ func (d Dir) Traffic() string         { return d.path("traffic.json") }
 
 func (c *Config) Validate() error {
 	c.Name = strings.TrimSpace(c.Name)
-	if c.Name == "" || len(c.Name) > 48 || strings.ContainsAny(c.Name, "#\r\n") {
+	if c.Name == "" || utf8.RuneCountInString(c.Name) > 48 || strings.ContainsAny(c.Name, "#\r\n") {
 		return errors.New("名称需要 1 到 48 个字符，且不能包含 #")
 	}
 	if c.Port < 1 || c.Port > 65535 || c.PanelPort < 1 || c.PanelPort > 65535 || c.Port == c.PanelPort {
