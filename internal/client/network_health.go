@@ -83,7 +83,7 @@ func healthQuery() []byte {
 }
 func (p *Proxy) CheckDNS(ctx context.Context) string {
 	var response dnsmessage.Message
-	if response.Unpack(p.exchangeDNS(ctx, healthQuery())) != nil || response.RCode != dnsmessage.RCodeSuccess {
+	if response.Unpack(p.exchangeDNSRemote(ctx, healthQuery())) != nil || response.RCode != dnsmessage.RCodeSuccess {
 		return "dns_resolution"
 	}
 	for _, r := range response.Answers {

@@ -159,3 +159,112 @@ func TestMetaRulesDatDecisions(t *testing.T) {
 		t.Fatal("geolocation-!cn / cn lists mixed up")
 	}
 }
+
+func TestSpecificityWinsBetweenCNAndNotCN(t *testing.T) {
+	rules, e := Builtin()
+	if e != nil {
+		t.Fatal(e)
+	}
+	r, _ := New(rules, "")
+	r.Lookup = func(context.Context, string) ([]netip.Addr, error) { return nil, errors.New("offline") }
+	cases := map[string]bool{
+		"cn.bing.com:443":                   true,
+		"www.bing.com:443":                  false,
+		"download.microsoft.com:443":        true,
+		"update.microsoft.com:443":          true,
+		"microsoft.com:443":                 false,
+		"1drv.ms:443":                       false,
+		"aka.ms:443":                        false,
+		"img_cdn.qq.com:443":                true,
+		"LOCALHOST:8080":                    true,
+		"nas.local:5000":                    true,
+		"dev.internal:8080":                 true,
+		"[::ffff:192.168.1.1]:80":           true,
+	}
+	for target, want := range cases {
+		if got := r.Decide(context.Background(), target).Direct; got != want {
+			t.Errorf("%s: direct=%v, want %v", target, got, want)
+		}
+	}
+}
+
+func TestPoisonedResolvedIPAndHappyEyeballsPreserved(t *testing.T) {
+	rules, e := Builtin()
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, tc := range []struct {
+		name   string
+		ips    []string
+		direct bool
+	}{
+		{"cn_dual_stack", []string{"2400:3200::1", "223.5.5.5"}, true},
+		{"poisoned_zero", []string{"0.0.0.0"}, false},
+		{"poisoned_loopback", []string{"127.0.0.1"}, false},
+		{"fake_ip", []string{"198.18.0.5"}, false},
+		{"private_lan", []string{"192.168.1.50"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := New(rules, "")
+			calls := 0
+			r.Lookup = func(context.Context, string) ([]netip.Addr, error) {
+				calls++
+				var out []netip.Addr
+				for _, s := range tc.ips {
+					out = append(out, netip.MustParseAddr(s))
+				}
+				return out, nil
+			}
+			target := "unknown-domain-7f3k-" + tc.name + ".com:443"
+			d := r.Decide(context.Background(), target)
+			if d.Direct != tc.direct {
+				t.Fatalf("direct=%v, want %v (%+v)", d.Direct, tc.direct, d)
+			}
+			// Must keep target hostname:port rather than pinning ips[0].
+			if d.Address != target {
+				t.Fatalf("address=%q, want %q", d.Address, target)
+			}
+			// Second port on same host must hit cache without another DNS lookup.
+			d2 := r.Decide(context.Background(), "unknown-domain-7f3k-"+tc.name+".com:80")
+			if d2.Direct != tc.direct || calls != 1 {
+				t.Fatalf("cache miss across ports: calls=%d d2=%+v", calls, d2)
+			}
+		})
+	}
+}
+
+func TestGlobalModeRespectsLocalPrivateAndExceptions(t *testing.T) {
+	rules, e := Builtin()
+	if e != nil {
+		t.Fatal(e)
+	}
+	r, e := NewGlobal(rules, "corp.example\n203.0.113.55")
+	if e != nil {
+		t.Fatal(e)
+	}
+	r.Lookup = func(context.Context, string) ([]netip.Addr, error) {
+		t.Fatal("global mode must not invoke local DNS")
+		return nil, nil
+	}
+	for target, want := range map[string]bool{
+		"localhost:8080":          true,
+		"LOCALHOST:8080":          true,
+		"nas.local:5000":          true,
+		"router.asus.com:80":      true,
+		"corp.example:443":        true,
+		"sub.corp.example:443":    true,
+		"192.168.1.1:80":          true,
+		"100.64.1.1:80":           true,
+		"[::ffff:192.168.1.5]:80": true,
+		"203.0.113.55:443":        true,
+		"203.0.113.10:80":         false,
+		"baidu.com:443":           false,
+		"qq.com:443":              false,
+		"223.5.5.5:53":            false,
+		"google.com:443":          false,
+	} {
+		if got := r.Decide(context.Background(), target).Direct; got != want {
+			t.Errorf("%s: direct=%v, want %v", target, got, want)
+		}
+	}
+}

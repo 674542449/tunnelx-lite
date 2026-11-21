@@ -34,6 +34,12 @@ var script string
 //go:embed assets.json
 var assetManifest []byte
 
+type Uplink struct {
+	IfIndexV4  uint32   `json:"if_v4"`
+	IfIndexV6  uint32   `json:"if_v6"`
+	DNSServers []string `json:"dns"`
+}
+
 type Manager struct {
 	mu      sync.Mutex
 	cmd     *exec.Cmd
@@ -42,6 +48,7 @@ type Manager struct {
 	err     error
 	state   string
 	changed bool
+	uplink  Uplink
 }
 
 func Elevated() bool { return windows.GetCurrentProcessToken().IsElevated() }
@@ -139,7 +146,8 @@ func (m *Manager) Start(ctx context.Context, state, socks string, exempt []strin
 	if e != nil {
 		return e
 	}
-	c.Stderr = io.Discard
+	var stderrBuf strings.Builder
+	c.Stderr = &limitedWriter{w: &stderrBuf, limit: 4096}
 	if e = c.Start(); e != nil {
 		return e
 	}
@@ -148,6 +156,7 @@ func (m *Manager) Start(ctx context.Context, state, socks string, exempt []strin
 	m.input = input
 	m.done = make(chan struct{})
 	m.state = state
+	m.uplink = Uplink{}
 	m.mu.Unlock()
 	if e = json.NewEncoder(input).Encode(settings{State: state, Runtime: dir, SOCKS: net.JoinHostPort(a.String(), p), Exempt: exempt}); e != nil {
 		input.Close()
@@ -163,6 +172,14 @@ func (m *Manager) Start(ctx context.Context, state, socks string, exempt []strin
 		var detail string
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
+			if strings.HasPrefix(line, "TUN_UPLINK:") {
+				var u Uplink
+				if json.Unmarshal([]byte(strings.TrimPrefix(line, "TUN_UPLINK:")), &u) == nil {
+					m.mu.Lock()
+					m.uplink = u
+					m.mu.Unlock()
+				}
+			}
 			if line == "TUN_READY" && !reported {
 				ready <- nil
 				reported = true
@@ -179,6 +196,8 @@ func (m *Manager) Start(ctx context.Context, state, socks string, exempt []strin
 		err := c.Wait()
 		if detail != "" {
 			err = errors.New(detail)
+		} else if err != nil && strings.TrimSpace(stderrBuf.String()) != "" {
+			err = fmt.Errorf("TUN 异常：%s", strings.TrimSpace(stderrBuf.String()))
 		}
 		m.mu.Lock()
 		m.err = err
@@ -205,14 +224,38 @@ func (m *Manager) Start(ctx context.Context, state, socks string, exempt []strin
 		return errors.New("TUN 启动超时，请检查管理员权限与虚拟网卡")
 	}
 }
+type limitedWriter struct {
+	w     *strings.Builder
+	limit int
+}
+
+func (l *limitedWriter) Write(p []byte) (int, error) {
+	if rem := l.limit - l.w.Len(); rem > 0 {
+		if len(p) > rem {
+			l.w.Write(p[:rem])
+		} else {
+			l.w.Write(p)
+		}
+	}
+	return len(p), nil
+}
+
 func (m *Manager) Done() <-chan struct{} { return m.done }
 func (m *Manager) NetworkChanged() bool  { m.mu.Lock(); defer m.mu.Unlock(); return m.changed }
+func (m *Manager) Uplink() Uplink {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u := m.uplink
+	u.DNSServers = append([]string(nil), u.DNSServers...)
+	return u
+}
 func FlushDNS(ctx context.Context) error {
 	c := exec.CommandContext(ctx, filepath.Join(os.Getenv("SystemRoot"), "System32", "ipconfig.exe"), "/flushdns")
 	c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return c.Run()
 }
-func (m *Manager) Close() error {
+func (m *Manager) Close() error { return m.CloseTimeout(20 * time.Second) }
+func (m *Manager) CloseTimeout(timeout time.Duration) error {
 	m.mu.Lock()
 	input, done, c, state := m.input, m.done, m.cmd, m.state
 	m.input = nil
@@ -225,7 +268,7 @@ func (m *Manager) Close() error {
 	}
 	select {
 	case <-done:
-	case <-time.After(20 * time.Second):
+	case <-time.After(timeout):
 		if c != nil {
 			c.Process.Kill()
 		}

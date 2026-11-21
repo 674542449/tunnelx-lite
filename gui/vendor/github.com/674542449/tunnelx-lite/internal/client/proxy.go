@@ -2,6 +2,7 @@ package client
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,21 +21,65 @@ import (
 	"time"
 )
 
+type tunUplink struct {
+	ifV4, ifV6 uint32
+	dnsServers []string
+}
+
 type Proxy struct {
-	Mux           *Mux
-	Router        *routing.Router // Immutable while listeners are running; nil proxies every target.
-	TUN           bool            // Set before Start; DNS and address-family policy for captured IP traffic.
-	TUNIPv6       atomic.Bool
-	ipv6Successes atomic.Int32
-	dnsPreferred  atomic.Uint32
-	dnsSlots      chan struct{}
-	socks         net.Listener
-	http          *http.Server
-	slots         chan struct{}
-	ctx           context.Context
-	cancel        context.CancelFunc
-	mu            sync.Mutex
-	connections   map[net.Conn]bool
+	Mux             *Mux
+	Router          *routing.Router // Legacy direct field for tests; prefer SetRouter for runtime updates.
+	router          atomic.Pointer[routing.Router]
+	TUN             bool // Set before Start; DNS and address-family policy for captured IP traffic.
+	TUNIPv6         atomic.Bool
+	ipv6Successes   atomic.Int32
+	dnsPreferred    atomic.Uint32
+	dnsSlots        chan struct{}
+	dnsCacheEnabled atomic.Bool
+	dnsCacheMu      sync.Mutex
+	dnsCache        map[dnsCacheKey]dnsCacheEntry
+	revDNSMu        sync.Mutex
+	revDNS          map[netip.Addr]revDNSEntry
+	uplink          atomic.Pointer[tunUplink]
+	dnsCfg          atomic.Pointer[DNSConfig]
+	directDoHMu     sync.Mutex
+	directDoHClient *http.Client
+	directDNSQuery  func(context.Context, string, []byte) ([]byte, error) // tests only
+	socks           net.Listener
+	http            *http.Server
+	slots           chan struct{}
+	ctx             context.Context
+	cancel          context.CancelFunc
+	mu              sync.Mutex
+	connections     map[net.Conn]bool
+}
+
+func (p *Proxy) SetRouter(r *routing.Router) {
+	p.router.Store(r)
+	p.FlushDNSCache()
+}
+
+func (p *Proxy) getRouter() *routing.Router {
+	if r := p.router.Load(); r != nil {
+		return r
+	}
+	return p.Router
+}
+
+func (p *Proxy) EnableDNSCache() { p.dnsCacheEnabled.Store(true) }
+
+func (p *Proxy) SetUplink(ifV4, ifV6 uint32, dnsServers []string) {
+	cp := append([]string(nil), dnsServers...)
+	p.uplink.Store(&tunUplink{ifV4: ifV4, ifV6: ifV6, dnsServers: cp})
+	p.resetDirectDoHClient()
+	p.FlushDNSCache()
+}
+
+func (p *Proxy) getUplink() tunUplink {
+	if u := p.uplink.Load(); u != nil {
+		return *u
+	}
+	return tunUplink{}
 }
 
 func NewProxy(m *Mux) *Proxy {
@@ -80,6 +126,7 @@ func (p *Proxy) Close() {
 		c.Close()
 	}
 	p.mu.Unlock()
+	p.resetDirectDoHClient()
 	p.Mux.Close()
 }
 func (p *Proxy) accept() {
@@ -205,6 +252,10 @@ func (p *Proxy) socksConn(c net.Conn) {
 	case 1:
 		ctx, flow := p.Mux.beginFlow(p.ctx, target, "socks_connect", owner)
 		defer flow.end()
+		if p.TUN && p.shouldSniffTUN(target) {
+			p.socksConnectTUNSniff(ctx, c, target, flow)
+			return
+		}
 		t, e := p.openTCP(ctx, target)
 		if e != nil {
 			socksReply(c, 1, "0.0.0.0:0")
@@ -218,6 +269,64 @@ func (p *Proxy) socksConn(c net.Conn) {
 	default:
 		socksReply(c, 7, "0.0.0.0:0")
 	}
+}
+
+func (p *Proxy) shouldSniffTUN(target string) bool {
+	if p.getRouter() == nil {
+		return false
+	}
+	host, port, err := net.SplitHostPort(target)
+	if err != nil || port == "53" {
+		return false
+	}
+	_, err = netip.ParseAddr(host)
+	return err == nil
+}
+
+// socksConnectTUNSniff handles literal-IP TCP connections arriving from
+// tun2socks by peeking the initial TLS ClientHello SNI or HTTP Host header
+// (falling back to the reverse-DNS cache) so domain rules work in TUN mode.
+func (p *Proxy) socksConnectTUNSniff(ctx context.Context, c net.Conn, target string, flow *flowLog) {
+	if p.unsupportedIPv6(target) {
+		flow.failure("tun_ipv6_unavailable", errTUNIPv6Unavailable)
+		socksReply(c, 1, "0.0.0.0:0")
+		return
+	}
+	socksReply(c, 0, "0.0.0.0:0")
+	peek := make([]byte, 4096)
+	c.SetReadDeadline(time.Now().Add(80 * time.Millisecond))
+	n, readErr := c.Read(peek)
+	c.SetReadDeadline(time.Time{})
+	if readErr != nil {
+		var ne net.Error
+		if !(errors.As(readErr, &ne) && ne.Timeout()) && n == 0 {
+			return
+		}
+	}
+	host, port, _ := net.SplitHostPort(target)
+	routeTarget := target
+	if n > 0 {
+		if domain := sniffDomain(peek[:n]); domain != "" {
+			routeTarget = net.JoinHostPort(domain, port)
+		}
+	}
+	if routeTarget == target {
+		if ip, err := netip.ParseAddr(host); err == nil {
+			if rev := p.lookupReverseDNS(ip); rev != "" {
+				routeTarget = net.JoinHostPort(rev, port)
+			}
+		}
+	}
+	t, e := p.openTCPWithHint(ctx, target, routeTarget)
+	if e != nil {
+		return
+	}
+	defer t.Close()
+	var reader io.Reader = c
+	if n > 0 {
+		reader = io.MultiReader(bytes.NewReader(peek[:n]), c)
+	}
+	p.relayFlow(c, reader, t, flow)
 }
 func (p *Proxy) relay(c net.Conn, r io.Reader, t *Tunnel) {
 	p.relayFlow(c, r, t, nil)
@@ -390,12 +499,16 @@ func (p *Proxy) forwardHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer t.Close()
+	p.Mux.Stats.Active.Add(1)
+	defer p.Mux.Stats.Active.Add(-1)
+	stopCancel := context.AfterFunc(r.Context(), func() { t.Close() })
+	defer stopCancel()
 	out := r.Clone(r.Context())
 	out.RequestURI = ""
 	out.Header = out.Header.Clone()
 	stripHop(out.Header)
 	out.Close = true
-	if e = out.Write(flow.wrap(t, true)); e != nil {
+	if e = out.Write(flow.wrap(meterWriter{t, &p.Mux.Stats.Uploaded}, true)); e != nil {
 		flow.failure("http_request_write", e)
 		http.Error(w, "Request failed", 502)
 		return
@@ -432,11 +545,14 @@ func stripHop(h http.Header) {
 }
 
 type udpFlow struct {
-	stream  packetTransport
+	cancel  context.CancelFunc
+	sendCh  chan []byte
 	address []byte
 	log     *flowLog
 	ended   atomic.Bool
 }
+
+const maxUDPFlowsPerAssoc = 256
 
 func (p *Proxy) udpAssociate(parent context.Context, control net.Conn, requested string) {
 	host, port, _ := net.SplitHostPort(requested)
@@ -444,7 +560,11 @@ func (p *Proxy) udpAssociate(parent context.Context, control net.Conn, requested
 		socksReply(control, 2, "0.0.0.0:0")
 		return
 	}
-	u, e := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	listenIP := net.IPv4(127, 0, 0, 1)
+	if tcpAddr, ok := control.LocalAddr().(*net.TCPAddr); ok && tcpAddr.IP != nil && tcpAddr.IP.IsLoopback() {
+		listenIP = tcpAddr.IP
+	}
+	u, e := net.ListenUDP("udp", &net.UDPAddr{IP: listenIP})
 	if e != nil {
 		socksReply(control, 1, "0.0.0.0:0")
 		return
@@ -459,9 +579,7 @@ func (p *Proxy) udpAssociate(parent context.Context, control net.Conn, requested
 	flows := map[string]*udpFlow{}
 	defer func() {
 		for _, f := range flows {
-			f.stream.Close()
-			f.log.event("udp_association_ended", map[string]any{"reason": "control_closed_or_idle_timeout"})
-			f.log.end()
+			f.cancel()
 		}
 	}()
 	buf := make([]byte, 65535)
@@ -474,84 +592,114 @@ func (p *Proxy) udpAssociate(parent context.Context, control net.Conn, requested
 		if !src.IP.IsLoopback() || requestedPort != 0 && src.Port != requestedPort {
 			continue
 		}
-		if peer != nil && !src.IP.Equal(peer.IP) || peer != nil && src.Port != peer.Port {
+		if peer != nil && (!src.IP.Equal(peer.IP) || src.Port != peer.Port) {
 			continue
 		}
 		if n < 4 || buf[0] != 0 || buf[1] != 0 || buf[2] != 0 {
 			p.Mux.Stats.UDPDropped.Add(1)
 			continue
 		}
-		r := strings.NewReader(string(buf[3:n]))
-		target, raw, e := readAddress(r)
+		target, raw, e := readAddress(bytes.NewReader(buf[3:n]))
 		if e != nil {
 			continue
 		}
-		payload := buf[3+len(raw) : n]
+		payload := append([]byte(nil), buf[3+len(raw):n]...)
 		if peer == nil {
 			peer = src
 		}
 		f := flows[target]
 		if f != nil && f.ended.Load() {
-			f.stream.Close()
-			f.log.end()
+			f.cancel()
 			delete(flows, target)
 			f = nil
 		}
 		if f == nil {
 			// Streams closed by the node's idle timeout must not hold slots forever.
-			if len(flows) >= 32 {
+			if len(flows) >= maxUDPFlowsPerAssoc {
 				for key, old := range flows {
 					if old.ended.Load() {
-						old.stream.Close()
-						old.log.end()
+						old.cancel()
 						delete(flows, key)
 					}
 				}
 			}
-			if len(flows) >= 32 {
+			if len(flows) >= maxUDPFlowsPerAssoc {
 				p.Mux.Stats.UDPDropped.Add(1)
 				continue
 			}
 			owner, _ := ctx.Value(ownerKey{}).(diagnostics.Owner)
-			flowCtx, trace := p.Mux.beginFlow(ctx, target, "socks_udp", owner)
-			stream, e := p.openUDP(flowCtx, target)
-			if e != nil {
-				trace.end()
-				p.Mux.Stats.UDPDropped.Add(1)
-				continue
-			}
-			f = &udpFlow{stream: stream, address: raw, log: trace}
+			flowCtx, flowCancel := context.WithCancel(ctx)
+			flowCtx, trace := p.Mux.beginFlow(flowCtx, target, "socks_udp", owner)
+			f = &udpFlow{cancel: flowCancel, sendCh: make(chan []byte, 32), address: raw, log: trace}
 			flows[target] = f
-			go func(flow *udpFlow, dest *net.UDPAddr) {
-				defer flow.ended.Store(true)
-				for {
-					b, e := flow.stream.Receive(ctx)
-					if e != nil {
-						flow.log.failure("udp_receive", e)
-						flow.log.event("udp_receive_ended", errorFields(e))
-						return
-					}
-					out := append([]byte{0, 0, 0}, flow.address...)
-					out = append(out, b...)
-					u.SetWriteDeadline(time.Now().Add(5 * time.Second))
-					if _, e = u.WriteToUDP(out, dest); e != nil {
-						flow.log.failure("udp_local_write", e)
-						return
-					}
-					p.Mux.Stats.Downloaded.Add(int64(len(b)))
-					flow.log.packet(len(b), false)
-				}
-			}(f, peer)
+			go p.runUDPFlow(flowCtx, f, target, u, peer)
 		}
-		if e = f.stream.Send(payload); e != nil {
-			f.log.failure("udp_send", e)
-			f.log.end()
+		select {
+		case f.sendCh <- payload:
+		default:
 			p.Mux.Stats.UDPDropped.Add(1)
-			delete(flows, target)
-			f.stream.Close()
-		} else {
-			f.log.packet(len(payload), true)
-			p.Mux.Stats.Uploaded.Add(int64(len(payload)))
 		}
+	}
+}
+
+func (p *Proxy) runUDPFlow(ctx context.Context, flow *udpFlow, target string, u *net.UDPConn, dest *net.UDPAddr) {
+	defer func() {
+		flow.ended.Store(true)
+		flow.cancel()
+		flow.log.end()
+	}()
+	stream, e := p.openUDP(ctx, target)
+	if e != nil {
+		p.Mux.Stats.UDPDropped.Add(1)
+		return
+	}
+	defer stream.Close()
+	sendDone := make(chan struct{})
+	go func() {
+		defer close(sendDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case pkt := <-flow.sendCh:
+				if e := stream.Send(pkt); e != nil {
+					flow.log.failure("udp_send", e)
+					p.Mux.Stats.UDPDropped.Add(1)
+					flow.cancel()
+					stream.Close()
+					return
+				}
+				flow.log.packet(len(pkt), true)
+				p.Mux.Stats.Uploaded.Add(int64(len(pkt)))
+			}
+		}
+	}()
+	for {
+		b, e := stream.Receive(ctx)
+		if e != nil {
+			if ctx.Err() == nil {
+				flow.log.failure("udp_receive", e)
+				flow.log.event("udp_receive_ended", errorFields(e))
+			} else {
+				flow.log.event("udp_association_ended", map[string]any{"reason": "control_closed_or_idle_timeout"})
+			}
+			flow.cancel()
+			stream.Close()
+			<-sendDone
+			return
+		}
+		out := make([]byte, 3+len(flow.address)+len(b))
+		copy(out[3:], flow.address)
+		copy(out[3+len(flow.address):], b)
+		u.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if _, e = u.WriteToUDP(out, dest); e != nil {
+			flow.log.failure("udp_local_write", e)
+			flow.cancel()
+			stream.Close()
+			<-sendDone
+			return
+		}
+		p.Mux.Stats.Downloaded.Add(int64(len(b)))
+		flow.log.packet(len(b), false)
 	}
 }

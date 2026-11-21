@@ -198,7 +198,11 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64) (result e
 	attempt := e.connectID
 	e.connectCancel, e.connecting, e.stage, e.health = cancel, true, "restoring_proxy", Health{}
 	e.nodeID, e.nodeName = id, link.Name
-	mode, rules, exceptions := e.preferences.ProxyMode, e.rules, joinLines(e.preferences.DirectDomains)
+	mode, tunEnabled := e.preferences.ProxyMode, e.preferences.TUNEnabled || e.preferences.ProxyMode == routing.TUN
+	if mode == routing.TUN {
+		mode = routing.Global
+	}
+	rules, exceptions, dnsCfg := e.rules, joinLines(e.preferences.DirectDomains), e.preferences.dnsConfig()
 	e.mu.Unlock()
 	var m *client.Mux
 	var p *client.Proxy
@@ -237,7 +241,7 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64) (result e
 	if err := e.recoverProxy(); err != nil {
 		return err
 	}
-	if mode == routing.TUN {
+	if tunEnabled {
 		if !tunmode.Elevated() {
 			return errors.New("TUN 模式需要管理员权限，请退出客户端后右键选择“以管理员身份运行”")
 		}
@@ -267,7 +271,9 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64) (result e
 		return err
 	}
 	p = client.NewProxy(m)
-	if mode == routing.TUN {
+	p.EnableDNSCache()
+	p.SetDNSConfig(dnsCfg)
+	if tunEnabled {
 		if err = e.connectionStage(ctx, attempt, "checking_tun_network"); err != nil {
 			return err
 		}
@@ -277,11 +283,11 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64) (result e
 			return err
 		}
 	}
-	if mode == routing.Bypass {
-		if p.Router, err = routing.New(rules, exceptions); err != nil {
-			return err
-		}
+	router, err := buildRouter(mode, rules, exceptions, p, dnsCfg.Enabled)
+	if err != nil {
+		return err
 	}
+	p.SetRouter(router)
 	if err = p.Start(); err != nil {
 		return fmt.Errorf("本地代理端口被占用，请先退出其他代理软件：%w", err)
 	}
@@ -298,7 +304,7 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64) (result e
 		}
 		enabled = true
 	}
-	if mode == routing.TUN {
+	if tunEnabled {
 		if err = e.connectionStage(ctx, attempt, "starting_tun"); err != nil {
 			return err
 		}
@@ -306,6 +312,8 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64) (result e
 		if err = tun.Start(ctx, e.statePath("tun-state.json"), e.settings.SOCKS, []string{c.ServerIP}); err != nil {
 			return err
 		}
+		uplink := tun.Uplink()
+		p.SetUplink(uplink.IfIndexV4, uplink.IfIndexV6, uplink.DNSServers)
 	}
 	e.mu.Lock()
 	if ctx.Err() != nil || e.stopping > 0 {
@@ -425,6 +433,7 @@ func (e *Engine) disconnect() error {
 func (e *Engine) Probe(id string) (int64, error) {
 	e.mu.Lock()
 	server := e.findLocked(id)
+	tun := e.tun
 	e.mu.Unlock()
 	if server == nil {
 		return 0, errors.New("服务器不存在")
@@ -440,7 +449,23 @@ func (e *Engine) Probe(id string) (int64, error) {
 		return 0, err
 	}
 	defer m.Close()
+	if tun != nil {
+		uplink := tun.Uplink()
+		m.SetUplinkInterface(uplink.IfIndexV4, uplink.IfIndexV6)
+	}
 	started := time.Now()
+	if c.Transport == "quic" {
+		t, qerr := m.OpenTCP(ctx, "127.0.0.1:9")
+		if qerr == nil {
+			t.Close()
+			return max(1, time.Since(started).Milliseconds()), nil
+		}
+		var rejected *client.RequestError
+		if errors.As(qerr, &rejected) && rejected.Known {
+			return max(1, time.Since(started).Milliseconds()), nil
+		}
+		return 0, errors.New("QUIC 超时或无法连接")
+	}
 	r, err := m.PublicGET(ctx)
 	if err != nil {
 		return 0, errors.New("超时或无法连接")
@@ -452,7 +477,7 @@ func (e *Engine) Probe(id string) (int64, error) {
 	if _, err = io.Copy(io.Discard, io.LimitReader(r.Body, 8192)); err != nil {
 		return 0, errors.New("响应中断")
 	}
-	return time.Since(started).Milliseconds(), nil
+	return max(1, time.Since(started).Milliseconds()), nil
 }
 
 type ProbeResult struct {

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -71,10 +72,12 @@ func (e *Engine) findLocked(id string) *Server {
 
 func view(s Server) ServerView {
 	family := "域名"
-	if strings.Contains(s.Link.Host, ":") {
-		family = "IPv6"
-	} else if strings.Count(s.Link.Host, ".") == 3 && strings.Trim(s.Link.Host, "0123456789.") == "" {
-		family = "IPv4"
+	if addr, err := netip.ParseAddr(s.Link.Host); err == nil {
+		if addr.Unmap().Is4() {
+			family = "IPv4"
+		} else {
+			family = "IPv6"
+		}
 	}
 	return ServerView{ID: s.ID, Name: s.Link.Name, Host: s.Link.Host, Port: s.Link.Port, Family: family}
 }
@@ -160,7 +163,7 @@ func (e *Engine) Rename(id, name string) error {
 func (e *Engine) Remove(id string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.nodeID == id && (e.mux != nil || e.connecting) {
+	if e.nodeID == id && (e.mux != nil || e.connecting || e.recovering) {
 		return errors.New("请先断开这个服务器再删除")
 	}
 	list := make([]Server, 0, len(e.servers))

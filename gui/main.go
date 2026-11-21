@@ -85,6 +85,10 @@ func (a *App) SavePreferences(id string) error { return a.engine.SavePreferences
 func (a *App) SaveProxyMode(mode, exceptions string) error {
 	return a.engine.SaveProxyMode(mode, exceptions)
 }
+func (a *App) SaveTUN(enabled bool) error { return a.engine.SaveTUN(enabled) }
+func (a *App) SaveDNS(enabled bool, domestic, remote string) error {
+	return a.engine.SaveDNS(enabled, domestic, remote)
+}
 func (a *App) UpdateRoutingRules() error    { return a.engine.UpdateRoutingRules() }
 func (a *App) SaveTransport(t string) error { return a.engine.SaveTransport(t) }
 func (a *App) SaveBandwidth(mbps int) error { return a.engine.SaveBandwidth(mbps) }
@@ -137,7 +141,7 @@ func (a *App) Quit() error {
 
 func (a *App) toggleConnection() {
 	s := a.engine.Status()
-	if s["connected"] == true {
+	if s["connected"] == true || s["connection_state"] == "connecting" {
 		_ = a.engine.Disconnect()
 		return
 	}
@@ -154,8 +158,8 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.engine.RestoreProxyAtStartup()
 	// Shutting down or signing out while connected must not leave Windows
-	// pointing at a proxy that is about to disappear.
-	watchSessionEnd(func() { _ = a.engine.ReleaseSystemProxy() })
+	// pointing at a proxy or TUN NRPT DNS rule that is about to disappear.
+	watchSessionEnd(func() { _ = a.engine.ReleaseNetwork() })
 	go systray.Run(func() {
 		systray.SetIcon(trayIcon)
 		systray.SetTitle("txlite")
@@ -231,8 +235,8 @@ func run() error {
 	messages.ContactAdmin = "txlite 需要 Microsoft Edge WebView2 Runtime。\n请从微软官网安装 Evergreen Runtime 后重新打开：\n" + webView2URL
 	geometry := loadWindowState(dir)
 	return wails.Run(&options.App{
-		Title: "txlite", Width: geometry.Width, Height: geometry.Height, MinWidth: 760, MinHeight: 520,
-		AssetServer: &assetserver.Options{Assets: ui}, BackgroundColour: &options.RGBA{R: 245, G: 246, B: 248, A: 255},
+		Title: "txlite", Width: geometry.Width, Height: geometry.Height, MinWidth: 800, MinHeight: 540,
+		AssetServer: &assetserver.Options{Assets: ui}, BackgroundColour: &options.RGBA{R: 244, G: 246, B: 250, A: 255},
 		OnStartup: a.startup, OnBeforeClose: func(context.Context) bool { a.rememberWindow(); return false },
 		OnShutdown: func(context.Context) { engine.Close(); systray.Quit() }, HideWindowOnClose: true, Bind: []any{a},
 		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "7c8bd4f0-0e3f-4b1b-9f1a-3b1e1d7c6a11", OnSecondInstanceLaunch: func(options.SecondInstanceData) {

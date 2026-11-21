@@ -3,16 +3,17 @@ package client
 import (
 	"context"
 	"errors"
-	"github.com/674542449/tunnelx-lite/internal/routing"
 	"net"
 	"net/netip"
 	"time"
+
+	"github.com/674542449/tunnelx-lite/internal/routing"
 )
 
 func (p *Proxy) route(ctx context.Context, target string) routing.Decision {
 	d := routing.Decision{Address: target, Reason: "global_proxy"}
-	if p.Router != nil {
-		d = p.Router.Decide(ctx, target)
+	if r := p.getRouter(); r != nil {
+		d = r.Decide(ctx, target)
 	} else if localTarget(target) {
 		// The server refuses private targets, so LAN devices are only reachable directly.
 		d = routing.Decision{Address: target, Direct: true, Reason: "local_network"}
@@ -24,18 +25,70 @@ func (p *Proxy) route(ctx context.Context, target string) routing.Decision {
 	flowFrom(ctx).event("route_selected", map[string]any{"route": route, "rule": d.Reason})
 	return d
 }
+
 func localTarget(target string) bool {
 	host, _, err := net.SplitHostPort(target)
 	if err != nil {
 		return false
 	}
-	if host == "localhost" {
+	if routing.IsLocalDomain(host) {
 		return true
 	}
 	a, err := netip.ParseAddr(host)
-	return err == nil && (a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsUnspecified())
+	return err == nil && routing.IsLocalIP(a)
 }
+
+func (p *Proxy) directDialer(timeout time.Duration) *net.Dialer {
+	d := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
+	if p.TUN {
+		u := p.getUplink()
+		d.Control = uplinkControl(u.ifV4, u.ifV6)
+	}
+	return d
+}
+
+// dialDirectContext dials a direct destination, optionally using encrypted
+// domestic DoH (default AliDNS) for public CN domain names in non-TUN mode so
+// ISP UDP/53 hijacking cannot redirect or break direct connections.
+func (p *Proxy) dialDirectContext(ctx context.Context, network, addr string, timeout time.Duration) (net.Conn, error) {
+	dialer := p.directDialer(timeout)
+	if !p.TUN && p.getDNSConfig().Enabled {
+		if host, port, err := net.SplitHostPort(addr); err == nil {
+			if _, ipErr := netip.ParseAddr(host); ipErr != nil {
+				r := p.getRouter()
+				if !routing.IsLocalDomain(host) && (r == nil || !r.IsLocalOrPrivateDomain(host)) {
+					if ips, lerr := p.LookupDomesticIPs(ctx, host); lerr == nil && len(ips) > 0 {
+						var lastErr error
+						for _, ip := range ips {
+							c, derr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+							if derr == nil {
+								return c, nil
+							}
+							lastErr = derr
+						}
+						if lastErr != nil {
+							// Fall back to system resolver if DoH IPs failed.
+							if c, derr := dialer.DialContext(ctx, network, addr); derr == nil {
+								return c, nil
+							}
+							return nil, lastErr
+						}
+					}
+				}
+			}
+		}
+	}
+	return dialer.DialContext(ctx, network, addr)
+}
+
 func (p *Proxy) openTCP(ctx context.Context, target string) (*Tunnel, error) {
+	return p.openTCPWithHint(ctx, target, target)
+}
+
+// openTCPWithHint routes using routeTarget (which may be a sniffed SNI/HTTP
+// hostname or reverse-DNS domain in TUN mode), dials original target directly
+// when direct, and proxies routeTarget when proxied.
+func (p *Proxy) openTCPWithHint(ctx context.Context, target, routeTarget string) (*Tunnel, error) {
 	if p.TUN {
 		if _, port, _ := net.SplitHostPort(target); port == "53" {
 			return p.dnsTCP(ctx), nil
@@ -45,11 +98,25 @@ func (p *Proxy) openTCP(ctx context.Context, target string) (*Tunnel, error) {
 			return nil, errTUNIPv6Unavailable
 		}
 	}
-	d := p.route(ctx, target)
+	d := p.route(ctx, routeTarget)
 	if !d.Direct {
-		return p.Mux.OpenTCPFast(ctx, target)
+		proxyTarget := target
+		if routeTarget != "" && routeTarget != target {
+			proxyTarget = routeTarget
+		}
+		return p.Mux.OpenTCPFast(ctx, proxyTarget)
 	}
-	c, e := (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, "tcp", d.Address)
+	dialAddr := d.Address
+	if p.TUN && target != "" {
+		// In TUN mode, the app already resolved the literal destination IP; dial it
+		// directly via the physical uplink interface without re-resolving through TUN.
+		if h, _, err := net.SplitHostPort(target); err == nil {
+			if _, err := netip.ParseAddr(h); err == nil {
+				dialAddr = target
+			}
+		}
+	}
+	c, e := p.dialDirectContext(ctx, "tcp", dialAddr, 10*time.Second)
 	if e != nil {
 		flowFrom(ctx).failure("direct_dial", e)
 		return nil, e
@@ -90,6 +157,7 @@ func (d *directPackets) Receive(ctx context.Context) ([]byte, error) {
 	return b[:n], e
 }
 func (d *directPackets) Close() error { d.stop(); return d.c.Close() }
+
 func (p *Proxy) openUDP(ctx context.Context, target string) (packetTransport, error) {
 	if p.TUN {
 		if _, port, _ := net.SplitHostPort(target); port == "53" {
@@ -100,11 +168,25 @@ func (p *Proxy) openUDP(ctx context.Context, target string) (packetTransport, er
 			return nil, errTUNIPv6Unavailable
 		}
 	}
-	d := p.route(ctx, target)
+	routeTarget := target
+	if p.TUN {
+		if h, port, err := net.SplitHostPort(target); err == nil {
+			if ip, err := netip.ParseAddr(h); err == nil {
+				if rev := p.lookupReverseDNS(ip); rev != "" {
+					routeTarget = net.JoinHostPort(rev, port)
+				}
+			}
+		}
+	}
+	d := p.route(ctx, routeTarget)
 	if !d.Direct {
 		return p.Mux.OpenUDP(ctx, target)
 	}
-	c, e := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "udp", d.Address)
+	dialAddr := d.Address
+	if p.TUN {
+		dialAddr = target
+	}
+	c, e := p.dialDirectContext(ctx, "udp", dialAddr, 5*time.Second)
 	if e != nil {
 		flowFrom(ctx).failure("direct_udp_dial", e)
 		return nil, e

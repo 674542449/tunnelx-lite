@@ -141,3 +141,54 @@ func TestImportConnectProxyAndWrongKey(t *testing.T) {
 		t.Fatal("server list did not survive a restart", err, again.startupWarning)
 	}
 }
+
+func TestHotSwitchRoutingModeAndTUNPreference(t *testing.T) {
+	link := testServer(t, "127.0.0.1:9")
+	dir := t.TempDir()
+	e, err := New(dir, Settings{SOCKS: freeAddr(t), HTTP: freeAddr(t), Web: freeAddr(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	if _, _, err = e.Import(link.String()); err != nil {
+		t.Fatal(err)
+	}
+	id := e.Servers()[0].ID
+	if err = e.SaveProxyMode(routing.Bypass, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Connect(id, false); err != nil {
+		t.Fatal(err)
+	}
+	// Switching between bypass_cn and global while connected must succeed without disconnecting.
+	if err = e.SaveProxyMode(routing.Global, "corp.example"); err != nil {
+		t.Fatalf("hot switch to global failed: %v", err)
+	}
+	if st := e.Status(); st["connected"] != true || st["preferences"].(Preferences).ProxyMode != routing.Global {
+		t.Fatalf("unexpected state after hot switch: %+v", st)
+	}
+	if err = e.SaveProxyMode(routing.Bypass, ""); err != nil {
+		t.Fatalf("hot switch back to bypass_cn failed: %v", err)
+	}
+	// Updating anti-pollution DNS override while connected must also succeed live.
+	if err = e.SaveDNS(true, "https://223.5.5.5/dns-query\nhttps://223.6.6.6/dns-query", "1.1.1.1:53"); err != nil {
+		t.Fatalf("live SaveDNS failed: %v", err)
+	}
+	if err = e.SaveDNS(true, "http://insecure.example/dns-query", ""); err == nil {
+		t.Fatal("accepted non-HTTPS DoH URL")
+	}
+	// Toggling TUN while connected must still require disconnect.
+	if err = e.SaveTUN(true); err == nil {
+		t.Fatal("SaveTUN succeeded while connected")
+	}
+	if err = e.Disconnect(); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.SaveTUN(true); err != nil {
+		t.Fatalf("SaveTUN while disconnected failed: %v", err)
+	}
+	again, err := New(dir, e.Settings())
+	if err != nil || !again.Status()["tun_enabled"].(bool) {
+		t.Fatalf("TUNEnabled did not persist across restart: %v", err)
+	}
+}

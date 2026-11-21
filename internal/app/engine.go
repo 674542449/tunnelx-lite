@@ -32,11 +32,27 @@ type Settings struct {
 type Preferences struct {
 	SelectedID    string   `json:"selected_id"`
 	ProxyMode     string   `json:"proxy_mode"`
+	TUNEnabled    bool     `json:"tun_enabled,omitempty"`
 	DirectDomains []string `json:"direct_domains"`
 	Transport     string   `json:"transport,omitempty"` // "auto" (default), "quic" or "h2"
 	// DownMbps is the user's real download bandwidth. Set, the server sends
 	// over QUIC at that rate without backing off on loss (Brutal); 0 keeps BBR.
 	DownMbps int `json:"down_mbps,omitempty"`
+	// DNSOverride enables encrypted split-horizon DNS (default true when nil):
+	// domestic CN domains use encrypted DoH (default AliDNS + DNSPod), while
+	// overseas/unknown domains resolve through the encrypted proxy tunnel.
+	DNSOverride *bool    `json:"dns_override,omitempty"`
+	DomesticDNS []string `json:"domestic_dns,omitempty"`
+	RemoteDNS   []string `json:"remote_dns,omitempty"`
+}
+
+func (p Preferences) dnsConfig() client.DNSConfig {
+	enabled := p.DNSOverride == nil || *p.DNSOverride
+	return client.DNSConfig{
+		Enabled:  enabled,
+		Domestic: append([]string(nil), p.DomesticDNS...),
+		Remote:   append([]string(nil), p.RemoteDNS...),
+	}
 }
 
 // ValidTransport accepts the transport choices offered in settings.
@@ -132,6 +148,11 @@ func New(root string, settings Settings) (*Engine, error) {
 	if b, err := os.ReadFile(e.statePath("preferences.json")); err == nil {
 		p := e.preferences
 		if json.Unmarshal(b, &p) == nil && routing.ValidMode(p.ProxyMode) && ValidTransport(p.Transport) && p.DownMbps >= 0 && p.DownMbps <= 1000 {
+			// Migrate legacy proxy_mode="tun" to orthogonal TUNEnabled + Global mode.
+			if p.ProxyMode == routing.TUN {
+				p.TUNEnabled = true
+				p.ProxyMode = routing.Global
+			}
 			e.preferences = p
 		} else {
 			e.startupWarning += " 本机偏好无法读取，已使用默认设置。"
@@ -188,6 +209,14 @@ func (e *Engine) Status() map[string]any {
 	s := map[string]any{"version": Version, "connected": e.mux != nil, "connection_state": state, "connection_stage": e.stage, "health": e.health, "preferences": e.preferences, "startup_warning": e.startupWarning, "node_name": e.nodeName, "node_id": e.nodeID, "system_proxy": e.system.Enabled(), "system_proxy_taken": e.system.Taken(), "socks": e.settings.SOCKS, "http": e.settings.HTTP, "logs": filepath.Join(e.root, "logs"), "proxy_recovery_error": e.proxyRecoveryError, "server_count": len(e.servers)}
 	s["routing_rules"] = e.ruleInfo
 	s["transport_preference"] = e.preferences.transport()
+	s["tun_enabled"] = e.preferences.TUNEnabled
+	s["tun_active"] = e.proxy != nil && e.proxy.TUN
+	dnsCfg := e.preferences.dnsConfig()
+	s["dns_override"] = dnsCfg.Enabled
+	s["domestic_dns"] = dnsCfg.Domestic
+	s["remote_dns"] = dnsCfg.Remote
+	s["default_domestic_dns"] = client.DefaultDomesticDNS
+	s["default_remote_dns"] = client.DefaultRemoteDNS
 	s["recovering"] = e.recovering
 	s["recovery_attempt"] = e.recoveryAttempt
 	s["tun"] = e.tunInfo
@@ -202,8 +231,8 @@ func (e *Engine) Status() map[string]any {
 	if e.mux != nil {
 		up, down := e.mux.Stats.Uploaded.Load(), e.mux.Stats.Downloaded.Load()
 		if seconds := time.Since(e.priorTime).Seconds(); seconds >= .8 {
-			e.upRate = int64(float64(up-e.priorUp) / seconds)
-			e.downRate = int64(float64(down-e.priorDown) / seconds)
+			e.upRate = max(0, int64(float64(up-e.priorUp)/seconds))
+			e.downRate = max(0, int64(float64(down-e.priorDown)/seconds))
 			e.priorUp, e.priorDown, e.priorTime = up, down, time.Now()
 		}
 		s["upload"], s["download"] = up, down
@@ -278,6 +307,21 @@ func (e *Engine) SaveTransport(t string) error {
 // session ends and there is no time for an orderly disconnect.
 func (e *Engine) ReleaseSystemProxy() error {
 	err := e.system.Restore()
+	e.setProxyError(err)
+	return err
+}
+
+// ReleaseNetwork restores both the Windows system proxy and any active TUN
+// adapter/NRPT DNS rules quickly when the Windows session is ending.
+func (e *Engine) ReleaseNetwork() error {
+	e.mu.Lock()
+	tun := e.tun
+	e.mu.Unlock()
+	var tunErr error
+	if tun != nil {
+		tunErr = tun.CloseTimeout(4 * time.Second)
+	}
+	err := errors.Join(tunErr, e.system.Restore())
 	e.setProxyError(err)
 	return err
 }

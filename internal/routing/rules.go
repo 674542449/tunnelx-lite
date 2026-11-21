@@ -80,7 +80,7 @@ func Domain(s string) (string, error) {
 			return "", errors.New("域名格式无效")
 		}
 		for _, c := range part {
-			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
 				return "", errors.New("域名格式无效")
 			}
 		}
@@ -136,19 +136,28 @@ func Parse(domains, addresses []byte) (*Rules, error) {
 	return r, s.Err()
 }
 func (r *Rules) MatchDomain(s string) bool {
+	return r.MatchDomainDepth(s) > 0
+}
+
+// MatchDomainDepth returns the specificity of the longest matching domain rule:
+// exact matches score len(domain)+1, suffix matches score len(suffix), regex
+// matches score 1, and misses return 0. Comparing depths lets a more specific
+// subdomain rule (e.g. cn.bing.com in geosite:cn) win over a broader parent
+// rule (e.g. bing.com in geosite:geolocation-!cn) and vice versa.
+func (r *Rules) MatchDomainDepth(s string) int {
 	if r == nil {
-		return false
+		return 0
 	}
 	d, e := Domain(s)
 	if e != nil {
-		return false
+		return 0
 	}
 	if r.exact[d] {
-		return true
+		return len(d) + 1
 	}
 	for v := d; v != ""; {
 		if r.suffix[v] {
-			return true
+			return len(v)
 		}
 		i := strings.IndexByte(v, '.')
 		if i < 0 {
@@ -158,10 +167,10 @@ func (r *Rules) MatchDomain(s string) bool {
 	}
 	for _, p := range r.patterns {
 		if p.MatchString(d) {
-			return true
+			return 1
 		}
 	}
-	return false
+	return 0
 }
 func (r *Rules) MatchIP(a netip.Addr) bool {
 	if r == nil {
@@ -258,15 +267,25 @@ type Decision struct {
 	Address, Reason string
 }
 type cached struct {
-	value Decision
-	until time.Time
+	direct bool
+	reason string
+	until  time.Time
 }
 type Router struct {
 	Rules, Exceptions *Rules
+	Global            bool // When true, only local/private targets and explicit exceptions go direct.
 	Lookup            func(context.Context, string) ([]netip.Addr, error)
 	mu                sync.Mutex
 	cache             map[string]cached
 }
+
+var (
+	cgnatPrefix  = netip.MustParsePrefix("100.64.0.0/10")
+	fakeIPPrefix = netip.MustParsePrefix("198.18.0.0/15")
+	docPrefix1   = netip.MustParsePrefix("192.0.2.0/24")
+	docPrefix2   = netip.MustParsePrefix("198.51.100.0/24")
+	docPrefix3   = netip.MustParsePrefix("203.0.113.0/24")
+)
 
 func New(r *Rules, exceptions string) (*Router, error) {
 	extra, _, e := ParseExceptions(exceptions)
@@ -277,15 +296,104 @@ func New(r *Rules, exceptions string) (*Router, error) {
 		return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 	}, cache: map[string]cached{}}, nil
 }
-func local(a netip.Addr) bool { return a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() }
+
+func NewGlobal(r *Rules, exceptions string) (*Router, error) {
+	rt, e := New(r, exceptions)
+	if e != nil {
+		return nil, e
+	}
+	rt.Global = true
+	return rt, nil
+}
+
+// IsLocalIP reports loopback, RFC1918/ULA private, link-local, multicast,
+// unspecified and CGNAT addresses (excluding RFC 5737 documentation ranges).
+func IsLocalIP(a netip.Addr) bool {
+	a = a.Unmap()
+	return a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsMulticast() || a.IsUnspecified() || cgnatPrefix.Contains(a)
+}
+
+// IsLocalDomain reports hostnames reserved for local or LAN resolution.
+func IsLocalDomain(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	return host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".lan") || strings.HasSuffix(host, ".home.arpa") || strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".localdomain")
+}
+
+// isBogusResolvedIP filters out DNS-poisoned or non-routable resolved answers
+// (such as 127.0.0.1, 0.0.0.0, Fake-IP 198.18.0.0/15, multicast, or doc ranges)
+// so a poisoned foreign domain is never mistakenly routed direct.
+func isBogusResolvedIP(a netip.Addr) bool {
+	a = a.Unmap()
+	return a.IsLoopback() || a.IsUnspecified() || a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsMulticast() || fakeIPPrefix.Contains(a) || docPrefix1.Contains(a) || docPrefix2.Contains(a) || docPrefix3.Contains(a)
+}
+
+func (r *Router) IsLocalOrPrivateDomain(host string) bool {
+	if r == nil {
+		return IsLocalDomain(host)
+	}
+	d, e := Domain(host)
+	if e != nil {
+		return IsLocalDomain(host)
+	}
+	if IsLocalDomain(d) || r.Exceptions.MatchDomain(d) {
+		return true
+	}
+	return r.Rules != nil && r.Rules.private.MatchDomain(d)
+}
+
+// IsDomesticDomain reports whether host matches geosite:cn with higher
+// specificity than geosite:geolocation-!cn (used for TUN split-horizon DNS).
+func (r *Router) IsDomesticDomain(host string) bool {
+	if r == nil || r.Global || r.Rules == nil {
+		return false
+	}
+	d, e := Domain(host)
+	if e != nil {
+		return false
+	}
+	cnDepth := r.Rules.MatchDomainDepth(d)
+	if cnDepth == 0 {
+		return false
+	}
+	return cnDepth > r.Rules.proxy.MatchDomainDepth(d)
+}
+
+// IsProxyDomain reports whether host explicitly matches geosite:geolocation-!cn
+// with specificity greater than or equal to geosite:cn.
+func (r *Router) IsProxyDomain(host string) bool {
+	if r == nil || r.Rules == nil {
+		return false
+	}
+	if r.Global {
+		return !r.IsLocalOrPrivateDomain(host)
+	}
+	d, e := Domain(host)
+	if e != nil {
+		return false
+	}
+	proxyDepth := r.Rules.proxy.MatchDomainDepth(d)
+	return proxyDepth > 0 && proxyDepth >= r.Rules.MatchDomainDepth(d)
+}
+
 func (r *Router) Decide(ctx context.Context, target string) Decision {
-	proxy := Decision{Address: target, Reason: "default_proxy"}
-	host, port, e := net.SplitHostPort(target)
+	proxyReason := "default_proxy"
+	if r.Global {
+		proxyReason = "global_proxy"
+	}
+	proxy := Decision{Address: target, Reason: proxyReason}
+	host, _, e := net.SplitHostPort(target)
 	if e != nil {
 		return proxy
 	}
 	if a, e := netip.ParseAddr(host); e == nil {
-		if local(a) || r.Exceptions.MatchIP(a) || r.Rules.private.MatchIP(a) || r.Rules.MatchIP(a) {
+		a = a.Unmap()
+		if IsLocalIP(a) || r.Exceptions.MatchIP(a) {
+			return Decision{true, target, "ip_direct"}
+		}
+		if r.Global {
+			return proxy
+		}
+		if r.Rules != nil && (r.Rules.private.MatchIP(a) || r.Rules.MatchIP(a)) {
 			return Decision{true, target, "ip_direct"}
 		}
 		return proxy
@@ -294,44 +402,67 @@ func (r *Router) Decide(ctx context.Context, target string) Decision {
 	if e != nil {
 		return proxy
 	}
-	// Clash order: exceptions, GEOSITE private, GEOSITE geolocation-!cn (proxy),
-	// GEOSITE cn, then GEOIP private/CN after resolving, otherwise proxy.
-	if host == "localhost" || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".lan") || strings.HasSuffix(host, ".home.arpa") || r.Exceptions.MatchDomain(host) || r.Rules.private.MatchDomain(host) {
+	// Priority: local/LAN, user exceptions, GEOSITE private.
+	if IsLocalDomain(host) || r.Exceptions.MatchDomain(host) || (r.Rules != nil && r.Rules.private.MatchDomain(host)) {
 		return Decision{true, target, "domain_direct"}
 	}
-	if r.Rules.proxy.MatchDomain(host) {
+	if r.Global || r.Rules == nil {
 		return proxy
 	}
-	if r.Rules.MatchDomain(host) {
-		return Decision{true, target, "domain_direct"}
+	// Compare specificity between GEOSITE cn and GEOSITE geolocation-!cn so
+	// specific subdomains (e.g. cn.bing.com, download.microsoft.com, 1drv.ms)
+	// win over broader parent entries; ties go to proxy (!cn).
+	proxyDepth := r.Rules.proxy.MatchDomainDepth(host)
+	cnDepth := r.Rules.MatchDomainDepth(host)
+	if cnDepth > 0 || proxyDepth > 0 {
+		if cnDepth > proxyDepth {
+			return Decision{true, target, "domain_direct"}
+		}
+		return Decision{false, target, "proxy_domain"}
 	}
 	r.mu.Lock()
-	c, ok := r.cache[target]
+	c, ok := r.cache[host]
 	r.mu.Unlock()
 	if ok && time.Now().Before(c.until) {
-		return c.value
+		return Decision{Direct: c.direct, Address: target, Reason: c.reason}
 	}
-	resolve, cancel := context.WithTimeout(ctx, time.Second)
+	resolve, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	ips, e := r.Lookup(resolve, host)
+	if ctx.Err() != nil {
+		return proxy
+	}
+	if e != nil || len(ips) == 0 {
+		// Do not poison the cache for 60s on transient DNS failures.
+		return proxy
+	}
+	allCN, allPrivate := true, true
+	for _, ip := range ips {
+		ip = ip.Unmap()
+		if isBogusResolvedIP(ip) {
+			allCN, allPrivate = false, false
+			break
+		}
+		if !r.Rules.MatchIP(ip) {
+			allCN = false
+		}
+		if !ip.IsPrivate() {
+			allPrivate = false
+		}
+	}
 	decision := proxy
-	if e == nil && len(ips) > 0 {
-		allCN := true
-		for _, ip := range ips {
-			if local(ip) || !(r.Rules.MatchIP(ip) || r.Rules.private.MatchIP(ip)) {
-				allCN = false
-				break
-			}
-		}
-		if allCN {
-			decision = Decision{true, net.JoinHostPort(ips[0].String(), port), "resolved_cn_ip"}
-		}
+	if allCN {
+		// Keep target (hostname:port) instead of pinning ips[0] so direct dials
+		// retain Happy Eyeballs and IPv4/IPv6 failover.
+		decision = Decision{true, target, "resolved_cn_ip"}
+	} else if allPrivate {
+		decision = Decision{true, target, "resolved_private_ip"}
 	}
 	r.mu.Lock()
 	if len(r.cache) >= 4096 {
 		clear(r.cache)
 	}
-	r.cache[target] = cached{decision, time.Now().Add(time.Minute)}
+	r.cache[host] = cached{direct: decision.Direct, reason: decision.Reason, until: time.Now().Add(time.Minute)}
 	r.mu.Unlock()
 	return decision
 }

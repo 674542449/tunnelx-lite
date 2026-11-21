@@ -167,10 +167,11 @@ func (s *Server) quicStream(conn *quic.Conn, st *quic.Stream, authed *atomic.Boo
 			r = throttledReader{r: r, l: upLimit, ctx: ctx}
 		}
 		_, e := io.CopyBuffer(idleConn{Conn: upstream, idle: idle}, countReader{r: r, n: &upBytes, total: &s.Uploaded}, make([]byte, 32<<10))
-		if tcp, ok := upstream.(*net.TCPConn); ok && e == nil {
-			tcp.CloseWrite()
-		} else if e != nil {
+		var qse *quic.StreamError
+		if e != nil && (errors.As(e, &qse) || ctx.Err() != nil) {
 			upstream.Close()
+		} else if tcp, ok := upstream.(*net.TCPConn); ok {
+			tcp.CloseWrite()
 		}
 	}()
 	var r io.Reader = idleConn{Conn: upstream, idle: idle}
@@ -178,7 +179,7 @@ func (s *Server) quicStream(conn *quic.Conn, st *quic.Stream, authed *atomic.Boo
 		r = throttledReader{r: r, l: downLimit, ctx: ctx}
 	}
 	if _, e = io.CopyBuffer(st, countReader{r: r, n: &downBytes, total: &s.Downloaded}, make([]byte, 32<<10)); e != nil {
-		st.CancelWrite(0)
+		st.Close()
 		st.CancelRead(0)
 	} else {
 		st.Close()

@@ -149,6 +149,13 @@ func (m *Mux) handshakeQUIC(ctx context.Context) (*quic.Conn, error) {
 	var pc net.PacketConn
 	if m.bindAddr != nil {
 		pc, e = net.ListenUDP("udp", &net.UDPAddr{IP: m.bindAddr.(*net.TCPAddr).IP})
+	} else if m.uplinkIfV4 != 0 || m.uplinkIfV6 != 0 {
+		network := "udp4"
+		if addr.IP != nil && addr.IP.To4() == nil {
+			network = "udp6"
+		}
+		lc := net.ListenConfig{Control: uplinkControl(m.uplinkIfV4, m.uplinkIfV6)}
+		pc, e = lc.ListenPacket(ctx, network, "")
 	} else {
 		pc, e = net.ListenUDP("udp", nil)
 	}

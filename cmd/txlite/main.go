@@ -81,9 +81,10 @@ func initialize(d lite.Dir, name string, port, panelPort int, inbound, outbound 
 	}
 	if name == "" {
 		host, _ := os.Hostname()
+		host = strings.NewReplacer("#", "", "\r", "", "\n", "").Replace(host)
 		name = "txlite-" + host
-		if len(name) > 48 {
-			name = name[:48]
+		if r := []rune(name); len(r) > 48 {
+			name = string(r[:48])
 		}
 	}
 	if port == 0 {
@@ -202,7 +203,12 @@ func menu(d lite.Dir) error {
 	for {
 		state := "未知"
 		if out, err := exec.Command("systemctl", "is-active", service).Output(); err == nil || len(out) > 0 {
-			state = map[string]string{"active": "运行中", "inactive": "已停止", "failed": "启动失败"}[strings.TrimSpace(string(out))]
+			raw := strings.TrimSpace(string(out))
+			if mapped, ok := map[string]string{"active": "运行中", "inactive": "已停止", "failed": "启动失败", "activating": "启动中", "deactivating": "停止中"}[raw]; ok {
+				state = mapped
+			} else if raw != "" {
+				state = raw
+			}
 		}
 		fmt.Printf("\n==== txlite %s 管理菜单 · 服务状态：%s ====\n", lite.Version, state)
 		fmt.Println("  1) 查看面板地址与分享链接")

@@ -3,78 +3,365 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<script>
+try {
+  var savedTheme = localStorage.getItem('txlite.theme');
+  var scheme = savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : 'light dark';
+  document.querySelector('meta[name="color-scheme"]').content = scheme;
+} catch (e) {}
+</script>
 <title>txlite</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="toolbar" role="toolbar" aria-label="主工具栏">
-  <button id="import-clipboard" type="button" title="从剪贴板导入 txlite:// 分享链接 (Ctrl+V)">从剪贴板导入</button>
-  <button id="import-manual" type="button" title="粘贴一个或多个分享链接">添加链接</button>
-  <span class="sep"></span>
-  <button id="probe-all" type="button" title="测试全部服务器延迟">测试全部延迟</button>
-  <span class="sep"></span>
-  <button id="connect" type="button" class="primary">连接</button>
-  <button id="cancel" type="button" hidden>取消</button>
-  <span class="sep"></span>
-  <button id="open-settings" type="button">设置</button>
-  <button id="open-logs" type="button" title="打开日志目录">日志目录</button>
-  <span class="grow"></span>
-  <input id="filter" type="search" placeholder="筛选服务器" aria-label="筛选服务器">
-</header>
+<div class="shell">
+  <aside class="sidebar" aria-label="主导航与连接控制">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L4 6v6c0 5.25 3.4 9.74 8 11 4.6-1.26 8-5.75 8-11V6l-8-4z"/>
+          <path d="M9 12l2 2 4-4"/>
+        </svg>
+      </div>
+      <div class="brand-info">
+        <strong class="brand-name">txlite</strong>
+        <span class="brand-ver" id="brand-version">v0.2.4</span>
+      </div>
+    </div>
 
-<p id="warning" class="warning" hidden></p>
+    <nav class="nav" role="tablist" aria-label="功能视图">
+      <button type="button" class="nav-item active" role="tab" aria-selected="true" data-view="nodes">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/></svg>
+        <span>服务器节点</span>
+        <span class="nav-badge" id="nav-node-count">0</span>
+      </button>
+      <button type="button" class="nav-item" role="tab" aria-selected="false" data-view="settings">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>代理设置</span>
+      </button>
+      <button type="button" class="nav-item" role="tab" aria-selected="false" data-view="logs">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        <span>运行日志</span>
+        <span class="nav-dot" id="nav-log-dot" hidden></span>
+      </button>
+    </nav>
 
-<main class="table-wrap" id="table-wrap">
-  <table id="servers" aria-label="服务器列表">
-    <thead>
-      <tr><th class="c-act"></th><th>别名</th><th>地址</th><th class="c-port">端口</th><th class="c-type">类型</th><th class="c-fam">地址类型</th><th class="c-ms">延迟</th></tr>
-    </thead>
-    <tbody id="rows"></tbody>
-  </table>
-  <div id="empty" class="empty" hidden>
-    <strong>还没有服务器</strong>
-    <p>在服务器面板复制 txlite:// 分享链接，然后点击「从剪贴板导入」或按 Ctrl+V。</p>
-  </div>
-</main>
+    <div class="sidebar-spacer"></div>
 
-<section class="logpane" aria-label="信息">
-  <div class="logpane-head"><span>信息</span><button id="clear-log" type="button" class="link">清空</button></div>
-  <pre id="log" class="log" aria-live="polite"></pre>
-</section>
+    <section class="control-card" aria-label="连接与分流控制">
+      <div class="conn-header">
+        <span class="status-pill" id="status-pill">
+          <span class="dot" id="state-dot"></span>
+          <span id="state-text">未连接</span>
+        </span>
+        <span class="transport-chip" id="transport-chip" title="当前传输协议">AUTO</span>
+      </div>
 
-<footer class="statusbar">
-  <span class="sb-item" id="system-proxy" title="连接时自动设置 Windows 系统代理，断开时恢复">系统代理：未设置</span>
-  <label class="sb-item">路由
-    <select id="mode" aria-label="路由模式">
-      <option value="bypass_cn">绕过大陆</option>
-      <option value="global">全局代理</option>
-      <option value="tun">TUN 模式</option>
-    </select>
-  </label>
-  <span class="sb-item"><span id="state-dot" class="dot"></span><span id="state">未连接</span></span>
-  <span class="sb-item grow" id="current"></span>
-  <span class="sb-item mono" id="speed">↑ 0 B/s ↓ 0 B/s</span>
-  <span class="sb-item" id="transport"></span>
-  <span class="sb-item mono muted" id="ports"></span>
-</footer>
+      <div class="active-node-name" id="active-node-name">未选择节点</div>
 
-<div id="menu" class="menu" role="menu" hidden>
-  <button type="button" data-cmd="connect" role="menuitem">设为活动服务器并连接 (Enter)</button>
+      <div class="conn-actions">
+        <button id="connect-btn" type="button" class="btn-connect">
+          <svg class="ico-power" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+          <span id="connect-label">连接</span>
+        </button>
+        <button id="cancel-btn" type="button" class="btn-cancel" hidden>取消</button>
+      </div>
+
+      <div class="mode-block">
+        <div class="mode-label">
+          <span>路由规则</span>
+          <span class="mode-hint" id="mode-live-hint">支持实时切换</span>
+        </div>
+        <div class="segmented" role="radiogroup" aria-label="路由规则">
+          <button type="button" class="seg-btn active" role="radio" aria-checked="true" data-mode="bypass_cn">绕过大陆</button>
+          <button type="button" class="seg-btn" role="radio" aria-checked="false" data-mode="global">全局代理</button>
+        </div>
+      </div>
+
+      <div class="tun-row">
+        <div class="tun-meta">
+          <span class="tun-title">TUN 虚拟网卡</span>
+          <span class="tun-sub" id="tun-sub">接管全部 TCP/UDP</span>
+        </div>
+        <label class="switch" title="开启后将接管系统全部应用流量（支持与绕过大陆或全局规则配合使用）">
+          <input type="checkbox" id="tun-toggle" aria-label="开启 TUN 模式">
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </label>
+      </div>
+
+      <div class="telemetry-mini">
+        <div class="tele-col">
+          <span class="tele-label">上传</span>
+          <span class="tele-val mono" id="speed-up">0 B/s</span>
+        </div>
+        <div class="tele-col">
+          <span class="tele-label">下载</span>
+          <span class="tele-val mono" id="speed-down">0 B/s</span>
+        </div>
+      </div>
+    </section>
+  </aside>
+
+  <main class="content">
+    <div id="banner" class="banner" role="status" hidden>
+      <div class="banner-body">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span id="banner-text"></span>
+      </div>
+      <button type="button" id="banner-recover" class="btn btn-sm" hidden>恢复网络</button>
+    </div>
+
+    <!-- VIEW: NODES -->
+    <section class="view active" id="view-nodes" role="tabpanel" aria-label="服务器节点">
+      <header class="view-header">
+        <div class="view-title-group">
+          <h1>服务器节点</h1>
+          <span class="pill-count" id="header-node-count">0 个节点</span>
+        </div>
+        <div class="header-actions">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="filter" type="search" placeholder="搜索别名或地址…" aria-label="筛选服务器">
+          </div>
+          <button id="probe-all" type="button" class="btn" title="测试全部服务器延迟">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            <span>全部测速</span>
+          </button>
+          <button id="import-manual" type="button" class="btn" title="手动输入或粘贴一个或多个链接">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>添加链接</span>
+          </button>
+          <button id="import-clipboard" type="button" class="btn btn-accent" title="从剪贴板导入 txlite:// 分享链接 (Ctrl+V)">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+            <span>剪贴板导入</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="metrics-strip">
+        <div class="metric-card">
+          <span class="metric-label">接管方式</span>
+          <strong class="metric-value" id="metric-capture">未设置</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">累计流量</span>
+          <strong class="metric-value mono" id="metric-traffic">↑ 0 B · ↓ 0 B</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">活动连接</span>
+          <strong class="metric-value mono" id="metric-active">0</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">本地端口</span>
+          <strong class="metric-value mono" id="metric-ports">SOCKS 1080 · HTTP 8088</strong>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-scroll" id="table-wrap">
+          <table id="servers" aria-label="服务器列表">
+            <thead>
+              <tr>
+                <th class="col-status" aria-label="状态"></th>
+                <th class="col-name">节点别名</th>
+                <th class="col-host">服务器地址</th>
+                <th class="col-fam">协议栈</th>
+                <th class="col-ms">延迟</th>
+                <th class="col-ops" aria-label="操作">操作</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+          <div id="empty" class="empty-state" hidden>
+            <div class="empty-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5.25 3.4 9.74 8 11 4.6-1.26 8-5.75 8-11V6l-8-4z"/><path d="M12 8v4"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </div>
+            <h2>还没有导入服务器</h2>
+            <p>在服务器管理面板复制 <code>txlite://</code> 分享链接，然后直接按 <kbd>Ctrl</kbd>+<kbd>V</kbd> 或点击下方按钮导入。</p>
+            <div class="empty-actions">
+              <button type="button" id="empty-paste" class="btn btn-accent">从剪贴板导入</button>
+              <button type="button" id="empty-manual" class="btn">手动粘贴链接</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW: SETTINGS -->
+    <section class="view" id="view-settings" role="tabpanel" aria-label="代理设置" hidden>
+      <header class="view-header">
+        <div class="view-title-group">
+          <h1>代理设置</h1>
+          <span class="muted-sub">配置分流例外、传输协议、拥塞控制与界面外观</span>
+        </div>
+      </header>
+
+      <div class="settings-scroll">
+        <div class="settings-grid">
+          <article class="card">
+            <div class="card-head">
+              <div>
+                <h2>直连例外与分流规则</h2>
+                <p class="card-desc">以下域名或 IP 网段始终直连（绕过大陆与全局模式均生效，修改后立即生效）。</p>
+              </div>
+              <button type="button" id="save-exceptions" class="btn btn-accent">保存例外</button>
+            </div>
+            <label class="field">
+              <span class="field-label">直连域名 / CIDR / IP（每行一条或逗号分隔）</span>
+              <textarea id="set-domains" rows="5" placeholder="例如：&#10;corp.example.com&#10;*.internal.cn&#10;10.20.0.0/16"></textarea>
+            </label>
+            <div class="rule-meta-row">
+              <div class="rule-meta-text" id="rule-info-text">分流规则加载中…</div>
+              <button type="button" id="btn-update-rules" class="btn">更新分流规则</button>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <div>
+                <h2>防污染 DNS 覆写</h2>
+                <p class="card-desc">国内域名默认走加密阿里云 / 腾讯 DoH 防止运营商 UDP/53 劫持；海外与未知域名走加密隧道远端 DNS 彻底杜绝大陆 DNS 污染（支持实时生效）。</p>
+              </div>
+              <div class="card-head-actions">
+                <label class="switch" title="开启防污染分流 DNS 覆写">
+                  <input type="checkbox" id="set-dns-override" checked aria-label="启用防污染 DNS 覆写">
+                  <span class="switch-track"><span class="switch-thumb"></span></span>
+                </label>
+                <button type="button" id="save-dns" class="btn btn-accent">保存 DNS</button>
+              </div>
+            </div>
+            <div class="preset-row">
+              <span class="field-label">快捷预设：</span>
+              <button type="button" class="chip" data-dns-preset="ali-tencent">阿里 + 腾讯 DoH（默认）</button>
+              <button type="button" class="chip" data-dns-preset="ali">仅阿里云公共 DNS DoH</button>
+              <button type="button" class="chip" data-dns-preset="tencent">仅腾讯 DNSPod DoH</button>
+            </div>
+            <div class="field-row">
+              <label class="field">
+                <span class="field-label">国内分流 DNS（留空使用默认阿里云 + 腾讯 DoH）</span>
+                <textarea id="set-domestic-dns" rows="3" placeholder="https://223.5.5.5/dns-query&#10;https://223.6.6.6/dns-query&#10;https://1.12.12.12/dns-query"></textarea>
+              </label>
+              <label class="field">
+                <span class="field-label">海外代理 DNS（经加密隧道，留空使用 Cloudflare + Google）</span>
+                <textarea id="set-remote-dns" rows="3" placeholder="1.1.1.1:53&#10;8.8.8.8:53&#10;https://1.1.1.1/dns-query&#10;https://8.8.8.8/dns-query"></textarea>
+              </label>
+            </div>
+            <p class="field-note">支持 <code>https://…/dns-query</code>（加密 DoH，推荐）或纯 <code>IP[:端口]</code>。局域网域名（<code>*.local</code> / <code>*.lan</code> / 路由器）始终保留物理网卡原 DNS。</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <div>
+                <h2>传输协议与 QUIC 加速</h2>
+                <p class="card-desc">调整传输层与下载拥塞控制策略（需断开连接后修改）。</p>
+              </div>
+              <button type="button" id="save-transport" class="btn btn-accent">保存传输</button>
+            </div>
+            <div class="field-row">
+              <label class="field">
+                <span class="field-label">传输方式</span>
+                <select id="set-transport">
+                  <option value="auto">自动（优先 QUIC，不通时回退 TCP）</option>
+                  <option value="quic">仅 QUIC（UDP）</option>
+                  <option value="h2">仅 TCP（HTTP/2）</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="field-label">下载带宽（Mbps，0 为自动 BBR）</span>
+                <input id="set-bandwidth" type="number" min="0" max="1000" step="1" value="0">
+              </label>
+            </div>
+            <p class="field-note">填写宽带实测下载速率（如 100、300）后，服务端将使用 Brutal 固定速率发送、丢包不降速；请勿高于实际带宽，填 0 使用自动 BBR。</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <div>
+                <h2>外观主题</h2>
+                <p class="card-desc">默认跟随 Windows 系统浅色 / 深色模式。</p>
+              </div>
+            </div>
+            <div class="theme-segmented" role="radiogroup" aria-label="界面主题">
+              <button type="button" class="theme-btn" role="radio" aria-checked="true" data-theme-choice="system" id="theme-system-btn">跟随系统</button>
+              <button type="button" class="theme-btn" role="radio" aria-checked="false" data-theme-choice="light">浅色</button>
+              <button type="button" class="theme-btn" role="radio" aria-checked="false" data-theme-choice="dark">深色</button>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <div>
+                <h2>网络维护与诊断</h2>
+                <p class="card-desc">本地代理端口、数据存储位置及一键网络恢复。</p>
+              </div>
+            </div>
+            <dl class="kv-list">
+              <dt>本地代理</dt><dd class="mono" id="info-ports">—</dd>
+              <dt>TUN 权限</dt><dd id="info-tun">—</dd>
+              <dt>数据目录</dt><dd class="mono break-all" id="info-datadir">—</dd>
+              <dt>客户端版本</dt><dd class="mono" id="info-version">—</dd>
+            </dl>
+            <div class="action-bar">
+              <button type="button" id="btn-recover-proxy" class="btn">恢复系统代理 / TUN</button>
+              <button type="button" id="btn-export-diag" class="btn">导出脱敏诊断报告</button>
+              <button type="button" id="btn-open-logs" class="btn">打开日志目录</button>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW: LOGS -->
+    <section class="view" id="view-logs" role="tabpanel" aria-label="运行日志" hidden>
+      <header class="view-header">
+        <div class="view-title-group">
+          <h1>运行日志</h1>
+          <span class="muted-sub">客户端实时操作与连接事件记录</span>
+        </div>
+        <div class="header-actions">
+          <div class="log-filters" role="group" aria-label="日志筛选">
+            <button type="button" class="chip active" data-log-filter="all">全部</button>
+            <button type="button" class="chip" data-log-filter="ok">成功</button>
+            <button type="button" class="chip" data-log-filter="err">异常</button>
+          </div>
+          <button type="button" id="logs-open-dir" class="btn">打开日志目录</button>
+          <button type="button" id="clear-log" class="btn">清空</button>
+        </div>
+      </header>
+      <div class="log-card">
+        <div id="log" class="log-stream" aria-live="polite"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="toast-host" class="toast-host" aria-live="polite"></div>
+
+<div id="menu" class="context-menu" role="menu" hidden>
+  <button type="button" data-cmd="connect" role="menuitem">连接此服务器 (Enter)</button>
   <button type="button" data-cmd="probe" role="menuitem">测试延迟</button>
   <button type="button" data-cmd="copy" role="menuitem">复制分享链接</button>
   <button type="button" data-cmd="rename" role="menuitem">重命名 (F2)</button>
   <hr>
-  <button type="button" data-cmd="remove" role="menuitem" class="danger">删除 (Delete)</button>
+  <button type="button" data-cmd="remove" role="menuitem" class="danger">删除服务器 (Delete)</button>
 </div>
 
-<dialog id="dialog">
+<dialog id="dialog" closedby="any" aria-labelledby="dialog-title">
   <form method="dialog" id="dialog-form">
-    <h2 id="dialog-title"></h2>
+    <div class="dialog-head">
+      <h2 id="dialog-title"></h2>
+      <button type="button" class="dialog-x" id="dialog-x" aria-label="关闭">✕</button>
+    </div>
     <div id="dialog-body"></div>
-    <p id="dialog-error" class="error" role="alert"></p>
-    <div class="dialog-actions"><button value="cancel" type="button" id="dialog-cancel">取消</button><button value="ok" type="submit" class="primary" id="dialog-ok">确定</button></div>
+    <p id="dialog-error" class="dialog-error" role="alert"></p>
+    <div class="dialog-actions">
+      <button value="cancel" type="button" class="btn" id="dialog-cancel">取消</button>
+      <button value="ok" type="submit" class="btn btn-accent" id="dialog-ok">确定</button>
+    </div>
   </form>
 </dialog>
+
 <script src="app.js"></script>
 </body>
 </html>

@@ -50,6 +50,14 @@ type Mux struct {
 	growing     bool // a background carrier dial is in progress; guarded by h2Mu
 	quic        quicState
 	bindAddr    net.Addr // tests only: source address for carrier dials
+	uplinkIfV4  uint32
+	uplinkIfV6  uint32
+}
+
+// SetUplinkInterface binds carrier dials to the physical uplink interface (used
+// for latency probes while TUN is active so probes bypass the TUN adapter).
+func (m *Mux) SetUplinkInterface(ifV4, ifV6 uint32) {
+	m.uplinkIfV4, m.uplinkIfV6 = ifV4, ifV6
 }
 
 type h2Carrier struct {
@@ -200,7 +208,8 @@ func (m *Mux) grow() {
 func (m *Mux) dialCarrier(ctx context.Context) (*h2Carrier, error) {
 	t := m.tls.Clone()
 	t.NextProtos = []string{"h2"}
-	c, e := (&tls.Dialer{Config: t, NetDialer: &net.Dialer{LocalAddr: m.bindAddr}}).DialContext(ctx, "tcp", m.address())
+	nd := &net.Dialer{LocalAddr: m.bindAddr, Control: uplinkControl(m.uplinkIfV4, m.uplinkIfV6)}
+	c, e := (&tls.Dialer{Config: t, NetDialer: nd}).DialContext(ctx, "tcp", m.address())
 	if e != nil {
 		fields := errorFields(e)
 		fields["transport"] = "h2"
@@ -491,6 +500,7 @@ func (m *Mux) PublicGET(ctx context.Context) (*http.Response, error) {
 	if e != nil {
 		return nil, e
 	}
+	probe.SetUplinkInterface(m.uplinkIfV4, m.uplinkIfV6)
 	probe.recorder.Store(m.recorder.Load())
 	res, e := probe.publicGET(ctx)
 	m.LastECH.Store(probe.LastECH.Load())
