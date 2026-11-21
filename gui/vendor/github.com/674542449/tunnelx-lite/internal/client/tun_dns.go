@@ -24,6 +24,11 @@ type dnsCacheEntry struct {
 	expires time.Time
 }
 
+type dnsFlight struct {
+	done   chan struct{}
+	answer []byte
+}
+
 type revDNSEntry struct {
 	domain  string
 	expires time.Time
@@ -120,14 +125,14 @@ func (p *Proxy) storeDNSCache(q dnsmessage.Question, answer []byte) {
 	if p.dnsCache == nil {
 		p.dnsCache = make(map[dnsCacheKey]dnsCacheEntry)
 	}
-	if len(p.dnsCache) >= 2048 {
+	if len(p.dnsCache) >= 4096 {
 		now := time.Now()
 		for k, v := range p.dnsCache {
 			if now.After(v.expires) {
 				delete(p.dnsCache, k)
 			}
 		}
-		if len(p.dnsCache) >= 2048 {
+		if len(p.dnsCache) >= 4096 {
 			clear(p.dnsCache)
 		}
 	}
@@ -225,6 +230,43 @@ func (p *Proxy) exchangeDNS(ctx context.Context, query []byte) []byte {
 	if cached := p.lookupDNSCache(h, q); cached != nil {
 		return cached
 	}
+	// Coalesce burst duplicate queries from browsers/video players into a single
+	// upstream lookup when DNS caching is active.
+	if p.dnsCacheEnabled.Load() {
+		key := dnsCacheKey{name: strings.ToLower(q.Name.String()), qtype: q.Type, qclass: q.Class}
+		p.dnsInflightMu.Lock()
+		if p.dnsInflight == nil {
+			p.dnsInflight = make(map[dnsCacheKey]*dnsFlight)
+		}
+		if f, exists := p.dnsInflight[key]; exists {
+			p.dnsInflightMu.Unlock()
+			select {
+			case <-f.done:
+				if len(f.answer) >= 2 {
+					out := append([]byte(nil), f.answer...)
+					binary.BigEndian.PutUint16(out[:2], h.ID)
+					return out
+				}
+				return dnsAnswer(h, q, dnsmessage.RCodeServerFailure)
+			case <-ctx.Done():
+				return dnsAnswer(h, q, dnsmessage.RCodeServerFailure)
+			}
+		}
+		f := &dnsFlight{done: make(chan struct{})}
+		p.dnsInflight[key] = f
+		p.dnsInflightMu.Unlock()
+		ans := p.resolveDNSLive(ctx, h, q, query)
+		f.answer = ans
+		close(f.done)
+		p.dnsInflightMu.Lock()
+		delete(p.dnsInflight, key)
+		p.dnsInflightMu.Unlock()
+		return ans
+	}
+	return p.resolveDNSLive(ctx, h, q, query)
+}
+
+func (p *Proxy) resolveDNSLive(ctx context.Context, h dnsmessage.Header, q dnsmessage.Question, query []byte) []byte {
 	qname := strings.TrimSuffix(strings.ToLower(q.Name.String()), ".")
 	if r := p.getRouter(); r != nil {
 		if r.IsLocalOrPrivateDomain(qname) {

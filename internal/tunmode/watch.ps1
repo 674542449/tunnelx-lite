@@ -99,7 +99,7 @@ try {
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = Join-Path $cfg.Runtime 'tun2socks.exe'
     $start.WorkingDirectory = $cfg.Runtime
-    $start.Arguments = '--device tun://' + $alias + '?guid=' + $guid + ' --proxy socks5://' + $cfg.SOCKS + ' --mtu 1400 --loglevel error --tcp-auto-tuning'
+    $start.Arguments = '--device tun://' + $alias + '?guid=' + $guid + ' --proxy socks5://' + $cfg.SOCKS + ' --mtu 1500 --tcp-sndbuf 4m --tcp-rcvbuf 4m --tcp-auto-tuning --loglevel error'
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
     $child = [Diagnostics.Process]::Start($start)
@@ -114,11 +114,11 @@ try {
         Start-Sleep -Milliseconds 200
     }
     if (-not $adapter -or $adapter.InterfaceGuid.ToString().Trim('{}') -ne $guid.Trim('{}')) { throw 'TUN 虚拟网卡未就绪' }
-    Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1 -NlMtuBytes 1400 -DadTransmits 0
+    Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1 -NlMtuBytes 1500 -DadTransmits 0
     New-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress '198.18.77.1' -PrefixLength 30 -AddressFamily IPv4 -PolicyStore ActiveStore | Out-Null
     $ipv6Enabled = $false
     try {
-        Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric 1 -NlMtuBytes 1400 -DadTransmits 0 -ErrorAction Stop
+        Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric 1 -NlMtuBytes 1500 -DadTransmits 0 -ErrorAction Stop
         New-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress 'fd01:198:18::1' -PrefixLength 126 -AddressFamily IPv6 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
         $ipv6Enabled = $true
     } catch {

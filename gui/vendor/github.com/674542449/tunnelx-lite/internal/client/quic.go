@@ -111,7 +111,7 @@ func (m *Mux) dialQUIC(ctx context.Context) (*quic.Conn, error) {
 	}
 	if e != nil {
 		q.failures++
-		q.retryAt = time.Now().Add(min(30*time.Second<<min(q.failures-1, 5), 10*time.Minute))
+		q.retryAt = time.Now().Add(min(8*time.Second<<min(q.failures-1, 4), 2*time.Minute))
 		fields := errorFields(e)
 		fields["transport"], fields["stage"] = "quic", "quic_handshake"
 		m.event(ctx, "carrier_dial_failed", fields)
@@ -162,6 +162,7 @@ func (m *Mux) handshakeQUIC(ctx context.Context) (*quic.Conn, error) {
 	if e != nil {
 		return nil, e
 	}
+	wire.TuneUDPSocket(pc)
 	tr := &quic.Transport{Conn: pc}
 	c, e := tr.Dial(ctx, addr, t, wire.QUICConfig())
 	if e != nil {
@@ -187,7 +188,7 @@ func (m *Mux) dropQUIC(c *quic.Conn) {
 	if q.conn == c {
 		q.conn = nil
 		q.failures++
-		q.retryAt = time.Now().Add(min(30*time.Second<<min(q.failures-1, 5), 10*time.Minute))
+		q.retryAt = time.Now().Add(min(8*time.Second<<min(q.failures-1, 4), 2*time.Minute))
 	}
 	q.mu.Unlock()
 	c.CloseWithError(0, "")

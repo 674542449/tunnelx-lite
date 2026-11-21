@@ -208,8 +208,8 @@ func (m *Mux) grow() {
 func (m *Mux) dialCarrier(ctx context.Context) (*h2Carrier, error) {
 	t := m.tls.Clone()
 	t.NextProtos = []string{"h2"}
-	nd := &net.Dialer{LocalAddr: m.bindAddr, Control: uplinkControl(m.uplinkIfV4, m.uplinkIfV6)}
-	c, e := (&tls.Dialer{Config: t, NetDialer: nd}).DialContext(ctx, "tcp", m.address())
+	nd := &net.Dialer{LocalAddr: m.bindAddr, KeepAlive: 30 * time.Second, Control: uplinkControl(m.uplinkIfV4, m.uplinkIfV6)}
+	raw, e := nd.DialContext(ctx, "tcp", m.address())
 	if e != nil {
 		fields := errorFields(e)
 		fields["transport"] = "h2"
@@ -217,7 +217,21 @@ func (m *Mux) dialCarrier(ctx context.Context) (*h2Carrier, error) {
 		m.event(ctx, "carrier_dial_failed", fields)
 		return nil, e
 	}
-	tc := c.(*tls.Conn)
+	if tcp, ok := raw.(*net.TCPConn); ok {
+		_ = tcp.SetNoDelay(true)
+		_ = tcp.SetReadBuffer(4 << 20)
+		_ = tcp.SetWriteBuffer(4 << 20)
+	}
+	tc := tls.Client(raw, t)
+	if e = tc.HandshakeContext(ctx); e != nil {
+		raw.Close()
+		fields := errorFields(e)
+		fields["transport"] = "h2"
+		fields["stage"] = "tcp_tls_handshake"
+		m.event(ctx, "carrier_dial_failed", fields)
+		return nil, e
+	}
+	var c net.Conn = tc
 	if tc.ConnectionState().NegotiatedProtocol != "h2" {
 		c.Close()
 		return nil, errors.New("server did not negotiate HTTP/2")

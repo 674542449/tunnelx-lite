@@ -35,9 +35,19 @@ download(){
 # start whenever the user pauses between pages (tcp_slow_start_after_idle).
 enable_bbr(){
   local conf=/etc/sysctl.d/99-txlite-bbr.conf
-  # QUIC needs larger UDP socket buffers than the kernel default.
-  { printf '%s\n' 'net.ipv4.tcp_slow_start_after_idle = 0' 'net.core.rmem_max = 7500000' 'net.core.wmem_max = 7500000' >/etc/sysctl.d/99-txlite-tcp.conf && chmod 644 /etc/sysctl.d/99-txlite-tcp.conf; } 2>/dev/null || true
-  sysctl -q -w net.ipv4.tcp_slow_start_after_idle=0 net.core.rmem_max=7500000 net.core.wmem_max=7500000 >/dev/null 2>&1 || true
+  # Enlarge TCP/UDP socket buffers (16 MB) for high-BDP QUIC/HTTP2 downloads and 4K streaming.
+  { printf '%s\n' \
+    'net.ipv4.tcp_slow_start_after_idle = 0' \
+    'net.ipv4.tcp_mtu_probing = 1' \
+    'net.core.rmem_max = 16777216' \
+    'net.core.wmem_max = 16777216' \
+    'net.core.rmem_default = 1048576' \
+    'net.core.wmem_default = 1048576' \
+    'net.core.netdev_max_backlog = 16384' \
+    'net.ipv4.tcp_rmem = 4096 131072 16777216' \
+    'net.ipv4.tcp_wmem = 4096 131072 16777216' \
+    >/etc/sysctl.d/99-txlite-tcp.conf && chmod 644 /etc/sysctl.d/99-txlite-tcp.conf; } 2>/dev/null || true
+  sysctl -p /etc/sysctl.d/99-txlite-tcp.conf >/dev/null 2>&1 || true
   modprobe tcp_bbr >/dev/null 2>&1 || true
   if ! grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
     echo "提示：内核不支持 BBR，保持系统默认"; return 0
@@ -143,7 +153,7 @@ case "${1:-install}" in
   install) install_all ;;
   update)
     test -x "$BIN" || die "尚未安装"
-    download; systemctl restart txlite; green "已更新到 $("$BIN" version)" ;;
+    download; enable_bbr; systemctl restart txlite; green "已更新到 $("$BIN" version)" ;;
   uninstall)
     read -rp "确定卸载 txlite？配置和密钥会一并删除，旧分享链接永久失效 [y/N]: " ok </dev/tty
     case "$ok" in y|Y) ;; *) echo "已取消"; exit 0;; esac

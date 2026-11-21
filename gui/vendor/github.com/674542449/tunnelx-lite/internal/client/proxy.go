@@ -38,6 +38,8 @@ type Proxy struct {
 	dnsCacheEnabled atomic.Bool
 	dnsCacheMu      sync.Mutex
 	dnsCache        map[dnsCacheKey]dnsCacheEntry
+	dnsInflightMu   sync.Mutex
+	dnsInflight     map[dnsCacheKey]*dnsFlight
 	revDNSMu        sync.Mutex
 	revDNS          map[netip.Addr]revDNSEntry
 	uplink          atomic.Pointer[tunUplink]
@@ -82,9 +84,22 @@ func (p *Proxy) getUplink() tunUplink {
 	return tunUplink{}
 }
 
+var clientRelayBufPool = sync.Pool{New: func() any { b := make([]byte, 128<<10); return &b }}
+
+func getClientRelayBuf() *[]byte  { return clientRelayBufPool.Get().(*[]byte) }
+func putClientRelayBuf(b *[]byte) { clientRelayBufPool.Put(b) }
+
+func tuneLocalTCP(c net.Conn) {
+	if tcp, ok := c.(*net.TCPConn); ok {
+		_ = tcp.SetNoDelay(true)
+		_ = tcp.SetReadBuffer(2 << 20)
+		_ = tcp.SetWriteBuffer(2 << 20)
+	}
+}
+
 func NewProxy(m *Mux) *Proxy {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Proxy{Mux: m, slots: make(chan struct{}, m.Config.MaxConnections), dnsSlots: make(chan struct{}, 32), ctx: ctx, cancel: cancel, connections: map[net.Conn]bool{}}
+	return &Proxy{Mux: m, slots: make(chan struct{}, m.Config.MaxConnections), dnsSlots: make(chan struct{}, 64), ctx: ctx, cancel: cancel, connections: map[net.Conn]bool{}}
 }
 func (p *Proxy) Start() error {
 	ln, e := net.Listen("tcp", p.Mux.Config.SOCKSListen)
@@ -135,6 +150,7 @@ func (p *Proxy) accept() {
 		if e != nil {
 			return
 		}
+		tuneLocalTCP(c)
 		select {
 		case p.slots <- struct{}{}:
 			p.track(c, true)
@@ -272,7 +288,13 @@ func (p *Proxy) socksConn(c net.Conn) {
 }
 
 func (p *Proxy) shouldSniffTUN(target string) bool {
-	if p.getRouter() == nil {
+	r := p.getRouter()
+	if r == nil {
+		return false
+	}
+	// In Global mode without user direct exceptions, non-local IPs always go
+	// straight to the proxy so skipping sniffing saves an extra read round-trip.
+	if r.Global && !r.HasExceptions() {
 		return false
 	}
 	host, port, err := net.SplitHostPort(target)
@@ -294,7 +316,7 @@ func (p *Proxy) socksConnectTUNSniff(ctx context.Context, c net.Conn, target str
 	}
 	socksReply(c, 0, "0.0.0.0:0")
 	peek := make([]byte, 4096)
-	c.SetReadDeadline(time.Now().Add(80 * time.Millisecond))
+	c.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
 	n, readErr := c.Read(peek)
 	c.SetReadDeadline(time.Time{})
 	if readErr != nil {
@@ -340,18 +362,20 @@ var relayIdle, halfCloseIdle = 5 * time.Minute, 30 * time.Second
 
 type idleWatch struct {
 	mu    sync.Mutex
-	last  time.Time
+	last  atomic.Int64
 	limit time.Duration
 	timer *time.Timer
 }
 
 func newIdleWatch(limit time.Duration, expire func()) *idleWatch {
-	w := &idleWatch{last: time.Now(), limit: limit}
+	w := &idleWatch{limit: limit}
+	w.last.Store(time.Now().UnixNano())
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.timer = time.AfterFunc(limit, func() {
 		w.mu.Lock()
-		left := w.limit - time.Since(w.last)
+		elapsed := time.Duration(time.Now().UnixNano() - w.last.Load())
+		left := w.limit - elapsed
 		if left > 0 {
 			w.timer.Reset(left)
 		}
@@ -362,12 +386,13 @@ func newIdleWatch(limit time.Duration, expire func()) *idleWatch {
 	})
 	return w
 }
-func (w *idleWatch) touch() { w.mu.Lock(); w.last = time.Now(); w.mu.Unlock() }
+func (w *idleWatch) touch() { w.last.Store(time.Now().UnixNano()) }
 func (w *idleWatch) shorten(limit time.Duration) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if limit < w.limit {
-		w.limit, w.last = limit, time.Now()
+		w.limit = limit
+		w.last.Store(time.Now().UnixNano())
 		w.timer.Reset(limit)
 	}
 }
@@ -393,7 +418,9 @@ func (p *Proxy) relayFlow(c net.Conn, r io.Reader, t *Tunnel, flow *flowLog) {
 	defer idle.stop()
 	up := make(chan error, 1)
 	go func() {
-		_, e := io.CopyBuffer(touchWriter{flow.wrap(meterWriter{t, &p.Mux.Stats.Uploaded}, true), idle}, r, make([]byte, 32<<10))
+		buf := getClientRelayBuf()
+		defer putClientRelayBuf(buf)
+		_, e := io.CopyBuffer(touchWriter{flow.wrap(meterWriter{t, &p.Mux.Stats.Uploaded}, true), idle}, r, *buf)
 		flow.directionEnd("app_to_target", e)
 		idle.shorten(halfCloseIdle)
 		t.CloseWrite()
@@ -403,7 +430,9 @@ func (p *Proxy) relayFlow(c net.Conn, r io.Reader, t *Tunnel, flow *flowLog) {
 		}
 		up <- e
 	}()
-	_, e := io.CopyBuffer(touchWriter{flow.wrap(meterWriter{c, &p.Mux.Stats.Downloaded}, false), idle}, t, make([]byte, 32<<10))
+	downBuf := getClientRelayBuf()
+	_, e := io.CopyBuffer(touchWriter{flow.wrap(meterWriter{c, &p.Mux.Stats.Downloaded}, false), idle}, t, *downBuf)
+	putClientRelayBuf(downBuf)
 	flow.directionEnd("target_to_app", e)
 	idle.shorten(halfCloseIdle)
 	if tcp, ok := c.(*net.TCPConn); ok {
@@ -464,6 +493,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		return
 	}
+	tuneLocalTCP(c)
 	p.track(c, true)
 	defer p.track(c, false)
 	defer c.Close()

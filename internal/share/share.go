@@ -80,6 +80,7 @@ func Parse(raw string) (Link, error) {
 // (callers resolve domain hosts first).
 func (l Link) Client(ip string) config.Client {
 	// The server may spend up to 10s dialing a slow target, so wait longer than
-	// that for CONNECT; the system proxy carries every app, so allow 1024 flows.
-	return config.Client{ServerName: l.ServerName, ServerIP: ip, Port: l.Port, Token: l.Token, Transport: "h2", Privacy: "strict", ECHConfig: l.ECHConfig, CertPin: l.CertPin, ConnectTimeout: 15, MaxConnections: 1024}
+	// that for CONNECT; spread TCP/H2 flows across 4 parallel carriers to avoid
+	// single-connection head-of-line blocking when QUIC is unavailable.
+	return config.Client{ServerName: l.ServerName, ServerIP: ip, Port: l.Port, Token: l.Token, Transport: "h2", Privacy: "strict", ECHConfig: l.ECHConfig, CertPin: l.CertPin, ConnectTimeout: 15, MaxConnections: 1024, H2Connections: 4, H2RetryNew: true}
 }

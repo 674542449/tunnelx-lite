@@ -13,8 +13,9 @@ import (
 	"github.com/apernet/quic-go/congestion"
 )
 
-// UseBBR replaces the connection's congestion controller with BBR.
-func UseBBR(conn *quic.Conn) { UseBBRProfile(conn, bbr.ProfileStandard) }
+// UseBBR replaces the connection's congestion controller with BBR tuned for
+// high-RTT, lossy consumer links (aggressive ramp-up and ACK-aggregation support).
+func UseBBR(conn *quic.Conn) { UseBBRProfile(conn, bbr.ProfileAggressive) }
 
 // UseBBRProfile selects a BBR tuning ("standard", "conservative", "aggressive").
 func UseBBRProfile(conn *quic.Conn, profile bbr.Profile) {

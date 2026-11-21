@@ -26,7 +26,7 @@ try {
       </div>
       <div class="brand-info">
         <strong class="brand-name">txlite</strong>
-        <span class="brand-ver" id="brand-version">v0.3.0</span>
+        <span class="brand-ver" id="brand-version">v0.3.1</span>
       </div>
     </div>
 
@@ -262,17 +262,26 @@ try {
               <label class="field">
                 <span class="field-label">传输方式</span>
                 <select id="set-transport">
-                  <option value="auto">自动（优先 QUIC，不通时回退 TCP）</option>
+                  <option value="auto">自动（优先 QUIC，不通时回退 TCP 多通道）</option>
                   <option value="quic">仅 QUIC（UDP）</option>
-                  <option value="h2">仅 TCP（HTTP/2）</option>
+                  <option value="h2">仅 TCP（HTTP/2 4 路并发）</option>
                 </select>
               </label>
               <label class="field">
-                <span class="field-label">下载带宽（Mbps，0 为自动 BBR）</span>
+                <span class="field-label">下载带宽（Mbps，0 为自动 BBR 激进模式）</span>
                 <input id="set-bandwidth" type="number" min="0" max="1000" step="1" value="0">
               </label>
             </div>
-            <p class="field-note">填写宽带实测下载速率（如 100、300）后，服务端将使用 Brutal 固定速率发送、丢包不降速；请勿高于实际带宽，填 0 使用自动 BBR。</p>
+            <div class="preset-row">
+              <span class="field-label">宽带提速预设：</span>
+              <button type="button" class="chip" data-bw-preset="0">自动（BBR 激进）</button>
+              <button type="button" class="chip" data-bw-preset="100">100M</button>
+              <button type="button" class="chip" data-bw-preset="200">200M</button>
+              <button type="button" class="chip" data-bw-preset="300">300M</button>
+              <button type="button" class="chip" data-bw-preset="500">500M</button>
+              <button type="button" class="chip" data-bw-preset="1000">1000M</button>
+            </div>
+            <p class="field-note">看电视/下大文件晚高峰丢包时，建议点选您宽带实际下载速度（如 200M / 300M / 500M）开启 Brutal 固定速率发包、丢包不降速；请勿高于实际宽带，填 0 自动启用 BBR 激进模式。</p>
           </article>
 
           <article class="card">

@@ -75,7 +75,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	tlsCfg.NextProtos = []string{"h2", "http/1.1"}
 	s.HTTP = &http.Server{Addr: s.Config.Listen, TLSConfig: tlsCfg, Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10}
-	if e = http2.ConfigureServer(s.HTTP, &http2.Server{MaxConcurrentStreams: 128, MaxUploadBufferPerConnection: 4 << 20, MaxUploadBufferPerStream: 1 << 20, IdleTimeout: 120 * time.Second}); e != nil {
+	if e = http2.ConfigureServer(s.HTTP, &http2.Server{MaxConcurrentStreams: 256, MaxUploadBufferPerConnection: 16 << 20, MaxUploadBufferPerStream: 4 << 20, IdleTimeout: 120 * time.Second}); e != nil {
 		return e
 	}
 	errs := make(chan error, 1)
@@ -219,11 +219,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	defer cleanup()
 	idle := time.Duration(s.Config.IdleTimeout) * time.Second
+	ic := newIdleConn(conn, idle)
 	upLimit, downLimit := s.limiters(r.Context())
 	var upBytes, downBytes atomic.Int64
 	proxyStart := time.Now()
 	up := make(chan error, 1)
 	go func() {
+		buf := getRelayBuf()
+		defer putRelayBuf(buf)
 		var reader io.Reader = r.Body
 		if upLimit != nil {
 			reader = throttledReader{r: reader, l: upLimit, ctx: r.Context()}
@@ -232,13 +235,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reader = accountReader{reader: reader, access: p, upload: true}
 		}
 		reader = countReader{r: reader, n: &upBytes, total: &s.Uploaded}
-		_, e := io.CopyBuffer(idleConn{Conn: conn, idle: idle}, reader, make([]byte, 32<<10))
+		_, e := io.CopyBuffer(ic, reader, *buf)
 		if tcp, ok := conn.(*net.TCPConn); ok {
 			tcp.CloseWrite()
 		}
 		up <- e
 	}()
-	var reader io.Reader = idleConn{Conn: conn, idle: idle}
+	var reader io.Reader = ic
 	if downLimit != nil {
 		reader = throttledReader{r: reader, l: downLimit, ctx: r.Context()}
 	}
@@ -246,7 +249,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reader = accountReader{reader: reader, access: p}
 	}
 	reader = countReader{r: reader, n: &downBytes, total: &s.Downloaded}
-	_, downErr := io.CopyBuffer(flushWriter{w: w}, reader, make([]byte, 32<<10))
+	downBuf := getRelayBuf()
+	_, downErr := io.CopyBuffer(flushWriter{w: w}, reader, *downBuf)
+	putRelayBuf(downBuf)
 	if downErr != nil {
 		conn.Close()
 		r.Body.Close()
@@ -358,17 +363,40 @@ func (w flushWriter) Write(p []byte) (int, error) {
 	return n, e
 }
 
+// 128 KiB pooled relay buffers cut syscall, Flush, and GC overhead 4x during
+// bulk downloads and 4K video streaming.
+var relayBufPool = sync.Pool{New: func() any { b := make([]byte, 128<<10); return &b }}
+
+func getRelayBuf() *[]byte  { return relayBufPool.Get().(*[]byte) }
+func putRelayBuf(b *[]byte) { relayBufPool.Put(b) }
+
 type idleConn struct {
 	net.Conn
-	idle time.Duration
+	idle      time.Duration
+	lastRead  atomic.Int64
+	lastWrite atomic.Int64
 }
 
-func (c idleConn) Read(b []byte) (int, error) {
-	c.Conn.SetReadDeadline(time.Now().Add(c.idle))
+func newIdleConn(c net.Conn, idle time.Duration) *idleConn {
+	return &idleConn{Conn: c, idle: idle}
+}
+
+func (c *idleConn) Read(b []byte) (int, error) {
+	now := time.Now()
+	ns := now.UnixNano()
+	if prev := c.lastRead.Load(); ns-prev >= int64(5*time.Second) || prev == 0 {
+		c.lastRead.Store(ns)
+		c.Conn.SetReadDeadline(now.Add(c.idle))
+	}
 	return c.Conn.Read(b)
 }
-func (c idleConn) Write(b []byte) (int, error) {
-	c.Conn.SetWriteDeadline(time.Now().Add(c.idle))
+func (c *idleConn) Write(b []byte) (int, error) {
+	now := time.Now()
+	ns := now.UnixNano()
+	if prev := c.lastWrite.Load(); ns-prev >= int64(5*time.Second) || prev == 0 {
+		c.lastWrite.Store(ns)
+		c.Conn.SetWriteDeadline(now.Add(c.idle))
+	}
 	return c.Conn.Write(b)
 }
 
@@ -650,7 +678,10 @@ func dialTarget(ctx context.Context, ips []net.IP, port string) (net.Conn, error
 			ip := ips[started]
 			started++
 			go func() {
-				c, e := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port))
+				c, e := (&net.Dialer{KeepAlive: 30 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port))
+				if tcp, ok := c.(*net.TCPConn); ok {
+					_ = tcp.SetNoDelay(true)
+				}
 				results <- dialResult{c, e}
 			}()
 			if started < len(ips) {

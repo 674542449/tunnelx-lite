@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -372,5 +373,69 @@ func TestDNSOverrideParsingAndUnknownDomainAntiPollution(t *testing.T) {
 	ansCN := p.exchangeDNS(context.Background(), makeQuery(t, 4002, "unknown-cn-site-9x2a.com.", dnsmessage.TypeA))
 	if ips := extractAnswerIPs(ansCN); len(ips) != 1 || ips[0].String() != "119.29.29.29" || domesticCalls.Load() != 1 || remoteCalls.Load() != 2 {
 		t.Fatalf("unknown CN domain did not upgrade via AliDNS DoH: ips=%v domestic=%d remote=%d", ips, domesticCalls.Load(), remoteCalls.Load())
+	}
+}
+
+func TestTUNDNSSingleflightCoalescing(t *testing.T) {
+	var remoteCalls atomic.Int32
+	gate := make(chan struct{})
+	cfg := poolServer(t, func(w http.ResponseWriter, r *http.Request) {
+		remoteCalls.Add(1)
+		w.Header().Set("Tunnelx-Version", config.Version)
+		w.WriteHeader(200)
+		http.NewResponseController(w).Flush()
+		length := make([]byte, 2)
+		if _, e := io.ReadFull(r.Body, length); e != nil {
+			return
+		}
+		q := make([]byte, binary.BigEndian.Uint16(length))
+		if _, e := io.ReadFull(r.Body, q); e != nil {
+			return
+		}
+		<-gate
+		h, question, _ := dnsQuestion(q)
+		answer := makeAReply(h.ID, question.Name.String(), [4]byte{93, 184, 216, 34})
+		w.Write(binary.BigEndian.AppendUint16(nil, uint16(len(answer))))
+		w.Write(answer)
+		http.NewResponseController(w).Flush()
+		<-r.Context().Done()
+	})
+	m, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewProxy(m)
+	p.TUN = true
+	p.EnableDNSCache()
+	defer p.Close()
+
+	const n = 10
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		id := uint16(5000 + i)
+		go func(txid uint16) {
+			defer wg.Done()
+			ans := p.exchangeDNS(context.Background(), makeQuery(t, txid, "video.cdn-burst-test.com.", dnsmessage.TypeA))
+			var msg dnsmessage.Message
+			if err := msg.Unpack(ans); err != nil {
+				errs <- err
+				return
+			}
+			if msg.ID != txid || msg.RCode != dnsmessage.RCodeSuccess || len(msg.Answers) != 1 {
+				t.Errorf("unexpected coalesced reply for id=%d: %+v", txid, msg)
+			}
+		}(id)
+	}
+	time.Sleep(40 * time.Millisecond)
+	close(gate)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	if calls := remoteCalls.Load(); calls != 1 {
+		t.Fatalf("expected 1 coalesced upstream DNS call, got %d", calls)
 	}
 }

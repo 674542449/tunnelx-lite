@@ -341,6 +341,14 @@ func (r *Router) IsLocalOrPrivateDomain(host string) bool {
 	return r.Rules != nil && r.Rules.private.MatchDomain(d)
 }
 
+// HasExceptions reports whether the user configured any custom direct exceptions.
+func (r *Router) HasExceptions() bool {
+	if r == nil || r.Exceptions == nil {
+		return false
+	}
+	return len(r.Exceptions.exact) > 0 || len(r.Exceptions.suffix) > 0 || len(r.Exceptions.patterns) > 0 || len(r.Exceptions.prefixes) > 0
+}
+
 // IsDomesticDomain reports whether host matches geosite:cn with higher
 // specificity than geosite:geolocation-!cn (used for TUN split-horizon DNS).
 func (r *Router) IsDomesticDomain(host string) bool {

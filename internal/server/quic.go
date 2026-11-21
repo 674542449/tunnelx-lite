@@ -37,6 +37,7 @@ func (s *Server) ServeQUIC(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
+	wire.TuneUDPSocket(pc)
 	tr := &quic.Transport{Conn: pc}
 	ln, e := tr.Listen(tlsCfg, wire.QUICConfig())
 	if e != nil {
@@ -156,17 +157,20 @@ func (s *Server) quicStream(conn *quic.Conn, st *quic.Stream, authed *atomic.Boo
 	stop := context.AfterFunc(ctx, func() { upstream.Close() })
 	defer stop()
 	idle := time.Duration(s.Config.IdleTimeout) * time.Second
+	ic := newIdleConn(upstream, idle)
 	upLimit, downLimit := s.limiters(ctx)
 	var upBytes, downBytes atomic.Int64
 	started := time.Now()
 	up := make(chan struct{})
 	go func() {
 		defer close(up)
+		buf := getRelayBuf()
+		defer putRelayBuf(buf)
 		var r io.Reader = st
 		if upLimit != nil {
 			r = throttledReader{r: r, l: upLimit, ctx: ctx}
 		}
-		_, e := io.CopyBuffer(idleConn{Conn: upstream, idle: idle}, countReader{r: r, n: &upBytes, total: &s.Uploaded}, make([]byte, 32<<10))
+		_, e := io.CopyBuffer(ic, countReader{r: r, n: &upBytes, total: &s.Uploaded}, *buf)
 		var qse *quic.StreamError
 		if e != nil && (errors.As(e, &qse) || ctx.Err() != nil) {
 			upstream.Close()
@@ -174,11 +178,14 @@ func (s *Server) quicStream(conn *quic.Conn, st *quic.Stream, authed *atomic.Boo
 			tcp.CloseWrite()
 		}
 	}()
-	var r io.Reader = idleConn{Conn: upstream, idle: idle}
+	var r io.Reader = ic
 	if downLimit != nil {
 		r = throttledReader{r: r, l: downLimit, ctx: ctx}
 	}
-	if _, e = io.CopyBuffer(st, countReader{r: r, n: &downBytes, total: &s.Downloaded}, make([]byte, 32<<10)); e != nil {
+	downBuf := getRelayBuf()
+	_, e = io.CopyBuffer(st, countReader{r: r, n: &downBytes, total: &s.Downloaded}, *downBuf)
+	putRelayBuf(downBuf)
+	if e != nil {
 		st.Close()
 		st.CancelRead(0)
 	} else {

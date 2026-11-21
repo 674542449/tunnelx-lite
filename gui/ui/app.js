@@ -234,7 +234,7 @@ function render() {
   const mode = pref.proxy_mode === 'global' ? 'global' : 'bypass_cn';
   const tun = status.tun || {};
 
-  $('brand-version').textContent = status.version || 'v0.3.0';
+  $('brand-version').textContent = status.version || 'v0.3.1';
   $('nav-node-count').textContent = String(servers.length);
   $('header-node-count').textContent = servers.length + ' 个节点';
 
@@ -722,6 +722,16 @@ $('save-dns').onclick = () => task('保存 DNS 覆写', async () => {
   log(msg, 'ok');
   toast(msg, 'ok');
 });
+
+for (const btn of document.querySelectorAll('[data-bw-preset]')) {
+  btn.onclick = () => {
+    if ($('set-bandwidth').disabled) {
+      toast('请先断开连接再修改下载带宽', 'warn');
+      return;
+    }
+    $('set-bandwidth').value = btn.dataset.bwPreset;
+  };
+}
 
 $('save-transport').onclick = () => task('保存传输设置', async () => {
   const t = $('set-transport').value;

@@ -3,6 +3,7 @@ package wire
 import (
 	"errors"
 	"io"
+	"net"
 	"time"
 
 	"github.com/apernet/quic-go"
@@ -51,18 +52,32 @@ func QUICStatus(code byte) int {
 }
 
 // QUICConfig is shared by client and server so both sides agree on limits.
+// Generous initial and max flow-control windows prevent high-BDP (150-250ms RTT)
+// links from capping file downloads and 4K video segments during ramp-up.
 var QUICConfig = func() *quic.Config {
 	return &quic.Config{
 		HandshakeIdleTimeout:           5 * time.Second,
-		MaxIdleTimeout:                 30 * time.Second,
+		MaxIdleTimeout:                 45 * time.Second,
 		KeepAlivePeriod:                10 * time.Second,
 		MaxIncomingStreams:             1024,
 		MaxIncomingUniStreams:          -1,
-		InitialStreamReceiveWindow:     1 << 20,
-		MaxStreamReceiveWindow:         16 << 20,
-		InitialConnectionReceiveWindow: 4 << 20,
-		MaxConnectionReceiveWindow:     64 << 20,
+		InitialStreamReceiveWindow:     8 << 20,
+		MaxStreamReceiveWindow:         32 << 20,
+		InitialConnectionReceiveWindow: 16 << 20,
+		MaxConnectionReceiveWindow:     128 << 20,
 	}
+}
+
+// TuneUDPSocket enlarges OS UDP receive/send buffers so burst QUIC downloads
+// and video streaming do not suffer kernel packet drops.
+func TuneUDPSocket(pc net.PacketConn) {
+	u, ok := pc.(*net.UDPConn)
+	if !ok {
+		return
+	}
+	const bufSize = 7 << 20 // 7 MiB
+	_ = u.SetReadBuffer(bufSize)
+	_ = u.SetWriteBuffer(bufSize)
 }
 
 // QUICHeader builds the stream preamble sent by clients.
