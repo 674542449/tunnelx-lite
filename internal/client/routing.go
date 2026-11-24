@@ -121,6 +121,7 @@ func (p *Proxy) openTCPWithHint(ctx context.Context, target, routeTarget string)
 		flowFrom(ctx).failure("direct_dial", e)
 		return nil, e
 	}
+	tuneLocalTCP(c)
 	stop := context.AfterFunc(p.ctx, func() { c.Close() })
 	t := &Tunnel{Reader: c, Writer: c, close: func() error { stop(); return c.Close() }, closeWrite: func() error {
 		if tcp, ok := c.(*net.TCPConn); ok {

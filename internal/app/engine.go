@@ -21,7 +21,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/tunmode"
 )
 
-const Version = "v0.3.1"
+const Version = "v0.4.0"
 
 type Settings struct {
 	SOCKS string `json:"socks_listen"`
@@ -34,10 +34,7 @@ type Preferences struct {
 	ProxyMode     string   `json:"proxy_mode"`
 	TUNEnabled    bool     `json:"tun_enabled,omitempty"`
 	DirectDomains []string `json:"direct_domains"`
-	Transport     string   `json:"transport,omitempty"` // "auto" (default), "quic" or "h2"
-	// DownMbps is the user's real download bandwidth. Set, the server sends
-	// over QUIC at that rate without backing off on loss (Brutal); 0 keeps BBR.
-	DownMbps int `json:"down_mbps,omitempty"`
+	Transport     string   `json:"transport,omitempty"` // "tcp" (default, direct TLS 1.3) or "h2" (multiplexed)
 	// DNSOverride enables encrypted split-horizon DNS (default true when nil):
 	// domestic CN domains use encrypted DoH (default AliDNS + DNSPod), while
 	// overseas/unknown domains resolve through the encrypted proxy tunnel.
@@ -55,14 +52,14 @@ func (p Preferences) dnsConfig() client.DNSConfig {
 	}
 }
 
-// ValidTransport accepts the transport choices offered in settings.
-func ValidTransport(t string) bool { return t == "" || t == "auto" || t == "quic" || t == "h2" }
+// ValidTransport accepts the TCP transport choices offered in settings.
+func ValidTransport(t string) bool { return t == "" || t == "tcp" || t == "h2" }
 
 func (p Preferences) transport() string {
-	if p.Transport == "" {
-		return "auto"
+	if p.Transport == "h2" {
+		return "h2"
 	}
-	return p.Transport
+	return "tcp"
 }
 
 type Health struct {
@@ -147,11 +144,15 @@ func New(root string, settings Settings) (*Engine, error) {
 	}
 	if b, err := os.ReadFile(e.statePath("preferences.json")); err == nil {
 		p := e.preferences
-		if json.Unmarshal(b, &p) == nil && routing.ValidMode(p.ProxyMode) && ValidTransport(p.Transport) && p.DownMbps >= 0 && p.DownMbps <= 1000 {
+		if json.Unmarshal(b, &p) == nil && routing.ValidMode(p.ProxyMode) {
 			// Migrate legacy proxy_mode="tun" to orthogonal TUNEnabled + Global mode.
 			if p.ProxyMode == routing.TUN {
 				p.TUNEnabled = true
 				p.ProxyMode = routing.Global
+			}
+			// Migrate removed QUIC/auto preferences cleanly to direct TCP.
+			if p.Transport != "tcp" && p.Transport != "h2" {
+				p.Transport = "tcp"
 			}
 			e.preferences = p
 		} else {
@@ -271,24 +272,8 @@ func (e *Engine) ConnLogs() []ConnLog {
 
 func (e *Engine) Close() error { return e.Disconnect() }
 
-// SaveBandwidth stores the download bandwidth for QUIC (0 = automatic BBR);
-// it applies to the next connection.
-func (e *Engine) SaveBandwidth(mbps int) error {
-	if mbps < 0 || mbps > 1000 {
-		return errors.New("下载带宽需在 0（自动）到 1000 Mbps 之间")
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.mux != nil || e.connecting || e.recovering || e.stopping > 0 {
-		return errors.New("请先断开连接，再修改下载带宽")
-	}
-	p := e.preferences
-	p.DownMbps = mbps
-	return e.savePreferencesLocked(p)
-}
-
-// SaveTransport chooses how the client reaches the server; it applies to the
-// next connection.
+// SaveTransport chooses the TCP transport mode ("tcp" or "h2"); it applies to
+// the next connection.
 func (e *Engine) SaveTransport(t string) error {
 	if t == "" || !ValidTransport(t) {
 		return errors.New("传输方式无效")

@@ -79,8 +79,8 @@ func Parse(raw string) (Link, error) {
 // Client builds the kernel client configuration; ip must be a literal address
 // (callers resolve domain hosts first).
 func (l Link) Client(ip string) config.Client {
-	// The server may spend up to 10s dialing a slow target, so wait longer than
-	// that for CONNECT; spread TCP/H2 flows across 4 parallel carriers to avoid
-	// single-connection head-of-line blocking when QUIC is unavailable.
-	return config.Client{ServerName: l.ServerName, ServerIP: ip, Port: l.Port, Token: l.Token, Transport: "h2", Privacy: "strict", ECHConfig: l.ECHConfig, CertPin: l.CertPin, ConnectTimeout: 15, MaxConnections: 1024, H2Connections: 4, H2RetryNew: true}
+	// Default to dedicated TLS 1.3 TCP tunnels ("tcp") so every flow gets its
+	// own congestion window with zero H2 HoL blocking; keep 6 H2 carriers ready
+	// for UDP (connect-udp) and legacy-server fallback.
+	return config.Client{ServerName: l.ServerName, ServerIP: ip, Port: l.Port, Token: l.Token, Transport: "tcp", Privacy: "strict", ECHConfig: l.ECHConfig, CertPin: l.CertPin, ConnectTimeout: 15, MaxConnections: 1024, H2Connections: 6, H2RetryNew: true}
 }

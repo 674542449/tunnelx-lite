@@ -58,7 +58,7 @@ import (
 const (
 	prefaceTimeout        = 10 * time.Second
 	firstSettingsTimeout  = 2 * time.Second // should be in-flight with preface anyway
-	handlerChunkWriteSize = 4 << 10
+	handlerChunkWriteSize = 64 << 10
 	defaultMaxStreams     = 250 // TODO: make this 100 as the GFE seems to?
 
 	// maxQueuedControlFrames is the maximum number of control frames like

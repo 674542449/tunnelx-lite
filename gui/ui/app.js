@@ -20,8 +20,7 @@ let logEntries = [];
 let lastTableSignature = '';
 let settingsHydrated = false;
 let lastSavedDomains = '';
-let lastSavedTransport = 'auto';
-let lastSavedBandwidth = 0;
+let lastSavedTransport = 'tcp';
 
 const stages = {
   restoring_proxy: '恢复代理中',
@@ -35,7 +34,7 @@ const stages = {
 };
 
 const modeNames = { bypass_cn: '绕过大陆', global: '全局代理' };
-const transportNames = { auto: '自动（优先 QUIC）', quic: '仅 QUIC', h2: '仅 TCP' };
+const transportNames = { tcp: 'TCP 直连（极速）', h2: 'TCP 多路复用 (H2)' };
 
 function el(tag, text, cls) {
   const e = document.createElement(tag);
@@ -234,7 +233,7 @@ function render() {
   const mode = pref.proxy_mode === 'global' ? 'global' : 'bypass_cn';
   const tun = status.tun || {};
 
-  $('brand-version').textContent = status.version || 'v0.3.1';
+  $('brand-version').textContent = status.version || 'v0.4.0';
   $('nav-node-count').textContent = String(servers.length);
   $('header-node-count').textContent = servers.length + ' 个节点';
 
@@ -259,19 +258,19 @@ function render() {
   $('probe-all').disabled = busy || !servers.length;
 
   // Transport chip
-  const tpref = status.transport_preference || 'auto';
+  const tpref = status.transport_preference === 'h2' ? 'h2' : 'tcp';
   const chip = $('transport-chip');
   if (on) {
-    const actual = status.transport === 'quic' ? 'quic' : 'h2';
-    chip.textContent = actual === 'quic' ? 'QUIC' : 'TCP';
+    const actual = status.transport === 'h2' ? 'h2' : 'tcp';
+    chip.textContent = actual === 'tcp' ? 'TCP' : 'H2';
     chip.className = 'transport-chip ' + actual;
-    chip.title = actual === 'quic'
-      ? '当前使用 QUIC (UDP) 传输'
-      : (tpref === 'auto' ? 'UDP 暂不可用，当前自动使用 TCP (HTTP/2)' : '当前使用 TCP (HTTP/2) 传输');
+    chip.title = actual === 'tcp'
+      ? '当前使用高速 TCP 直连多通道（TLS 1.3）'
+      : (tpref === 'tcp' ? '服务端为旧版，当前自动兼容 HTTP/2（更新服务端可启用极速直连）' : '当前使用 TCP HTTP/2 多路复用');
   } else {
-    chip.textContent = tpref === 'quic' ? 'QUIC' : tpref === 'h2' ? 'TCP' : 'AUTO';
+    chip.textContent = tpref === 'h2' ? 'H2' : 'TCP';
     chip.className = 'transport-chip';
-    chip.title = '首选传输：' + (transportNames[tpref] || tpref);
+    chip.title = '传输模式：' + (transportNames[tpref] || tpref);
   }
 
   // Orthogonal routing mode segmented control (hot-switchable while connected!)
@@ -353,19 +352,16 @@ function hydrateSettings(force) {
   const going = connecting();
 
   const domainsStr = (pref.direct_domains || []).join('\n');
-  const tpref = status.transport_preference || 'auto';
-  const mbps = pref.down_mbps || 0;
+  const tpref = status.transport_preference === 'h2' ? 'h2' : 'tcp';
 
   if (force || !settingsHydrated) {
     $('set-domains').value = domainsStr;
     $('set-transport').value = tpref;
-    $('set-bandwidth').value = mbps;
     $('set-dns-override').checked = status.dns_override !== false;
     $('set-domestic-dns').value = (status.domestic_dns || []).join('\n');
     $('set-remote-dns').value = (status.remote_dns || []).join('\n');
     lastSavedDomains = domainsStr;
     lastSavedTransport = tpref;
-    lastSavedBandwidth = mbps;
     settingsHydrated = true;
   }
 
@@ -376,7 +372,6 @@ function hydrateSettings(force) {
   $('set-remote-dns').disabled = busy || going;
   $('save-dns').disabled = busy || going;
   $('set-transport').disabled = busy || on || going;
-  $('set-bandwidth').disabled = busy || on || going;
   $('save-transport').disabled = busy || on || going;
   $('btn-update-rules').disabled = busy;
   $('btn-recover-proxy').disabled = busy || on || going;
@@ -723,29 +718,13 @@ $('save-dns').onclick = () => task('保存 DNS 覆写', async () => {
   toast(msg, 'ok');
 });
 
-for (const btn of document.querySelectorAll('[data-bw-preset]')) {
-  btn.onclick = () => {
-    if ($('set-bandwidth').disabled) {
-      toast('请先断开连接再修改下载带宽', 'warn');
-      return;
-    }
-    $('set-bandwidth').value = btn.dataset.bwPreset;
-  };
-}
-
 $('save-transport').onclick = () => task('保存传输设置', async () => {
-  const t = $('set-transport').value;
-  const mbps = Math.max(0, Math.min(1000, Math.round(Number($('set-bandwidth').value) || 0)));
-  if (t !== (status.transport_preference || 'auto')) {
+  const t = $('set-transport').value === 'h2' ? 'h2' : 'tcp';
+  if (t !== (status.transport_preference || 'tcp')) {
     await bridge().SaveTransport(t);
     log('传输方式已改为 ' + transportNames[t] + '，下次连接生效', 'ok');
   }
-  if (mbps !== (status.preferences?.down_mbps || 0)) {
-    await bridge().SaveBandwidth(mbps);
-    log(mbps ? '下载带宽已设为 ' + mbps + ' Mbps（Brutal 固定速率）' : '下载带宽已改为自动（BBR）', 'ok');
-  }
   lastSavedTransport = t;
-  lastSavedBandwidth = mbps;
   settingsHydrated = false;
   toast('传输设置已保存', 'ok');
 });
@@ -785,10 +764,10 @@ for (const btn of document.querySelectorAll('.theme-btn')) {
   btn.onclick = () => applyTheme(btn.dataset.themeChoice);
 }
 
-for (const chip of document.querySelectorAll('.chip')) {
+for (const chip of document.querySelectorAll('[data-log-filter]')) {
   chip.onclick = () => {
     logFilter = chip.dataset.logFilter;
-    for (const c of document.querySelectorAll('.chip')) c.classList.toggle('active', c === chip);
+    for (const c of document.querySelectorAll('[data-log-filter]')) c.classList.toggle('active', c === chip);
     renderLogs();
   };
 }

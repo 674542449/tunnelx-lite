@@ -84,18 +84,10 @@ func (p *Proxy) getUplink() tunUplink {
 	return tunUplink{}
 }
 
-var clientRelayBufPool = sync.Pool{New: func() any { b := make([]byte, 128<<10); return &b }}
+var clientRelayBufPool = sync.Pool{New: func() any { b := make([]byte, 256<<10); return &b }}
 
 func getClientRelayBuf() *[]byte  { return clientRelayBufPool.Get().(*[]byte) }
 func putClientRelayBuf(b *[]byte) { clientRelayBufPool.Put(b) }
-
-func tuneLocalTCP(c net.Conn) {
-	if tcp, ok := c.(*net.TCPConn); ok {
-		_ = tcp.SetNoDelay(true)
-		_ = tcp.SetReadBuffer(2 << 20)
-		_ = tcp.SetWriteBuffer(2 << 20)
-	}
-}
 
 func NewProxy(m *Mux) *Proxy {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -502,7 +494,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		flow.failure("proxy_response", e)
 		return
 	}
-	p.relayFlow(c, rw, t, flow)
+	// Drain any already-buffered bytes from net/http's 4 KiB bufio.Reader, then
+	// read directly from the raw TCP conn so uploads use full 256 KiB buffers.
+	var upReader io.Reader = c
+	if n := rw.Reader.Buffered(); n > 0 {
+		if peeked, pe := rw.Reader.Peek(n); pe == nil && len(peeked) > 0 {
+			early := append([]byte(nil), peeked...)
+			upReader = io.MultiReader(bytes.NewReader(early), c)
+		}
+	}
+	p.relayFlow(c, upReader, t, flow)
 }
 func (p *Proxy) forwardHTTP(w http.ResponseWriter, r *http.Request) {
 	if !r.URL.IsAbs() || r.URL.Scheme != "http" || r.URL.Host == "" {
@@ -559,7 +560,9 @@ func (p *Proxy) forwardHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header()[k] = v
 	}
 	w.WriteHeader(res.StatusCode)
-	n, copyError := io.Copy(flow.wrap(w, false), res.Body)
+	buf := getClientRelayBuf()
+	n, copyError := io.CopyBuffer(flow.wrap(w, false), res.Body, *buf)
+	putClientRelayBuf(buf)
 	flow.directionEnd("target_to_app", copyError)
 	p.Mux.Stats.Downloaded.Add(n)
 }

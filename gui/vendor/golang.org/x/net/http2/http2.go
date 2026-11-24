@@ -278,7 +278,7 @@ func newBufferedWriter(conn net.Conn, timeout time.Duration) *bufferedWriter {
 // TODO: pick a less arbitrary value? this is a bit under
 // (3 x typical 1500 byte MTU) at least. Other than that,
 // not much thought went into it.
-const bufWriterPoolBufferSize = 4 << 10
+const bufWriterPoolBufferSize = 64 << 10
 
 var bufWriterPool = sync.Pool{
 	New: func() interface{} {

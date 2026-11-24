@@ -15,12 +15,13 @@ func TestRejectUnsafeClientConfiguration(t *testing.T) {
 		func(c *Client) { c.ServerIP = "bootstrap.example" },
 		func(c *Client) { c.HTTPListen = "0.0.0.0:8088" },
 		func(c *Client) { c.Token = "short" },
-		func(c *Client) { c.H2Connections = 9 },
+		func(c *Client) { c.H2Connections = 17 },
 		func(c *Client) { c.H2PingTimeout = -1 },
 		func(c *Client) { c.H2ReadIdle = 121 },
 		func(c *Client) { c.H2MaxAge = 1 },
 		func(c *Client) { c.Transport = "h3" },
-		func(c *Client) { c.Transport = "tcp" },
+		func(c *Client) { c.Transport = "quic" },
+		func(c *Client) { c.Transport = "auto" },
 	} {
 		c := base
 		mutate(&c)

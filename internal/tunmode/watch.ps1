@@ -99,7 +99,7 @@ try {
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = Join-Path $cfg.Runtime 'tun2socks.exe'
     $start.WorkingDirectory = $cfg.Runtime
-    $start.Arguments = '--device tun://' + $alias + '?guid=' + $guid + ' --proxy socks5://' + $cfg.SOCKS + ' --mtu 1500 --tcp-sndbuf 4m --tcp-rcvbuf 4m --tcp-auto-tuning --loglevel error'
+    $start.Arguments = '--device tun://' + $alias + '?guid=' + $guid + ' --proxy socks5://' + $cfg.SOCKS + ' --mtu 1500 --tcp-sndbuf 8m --tcp-rcvbuf 8m --tcp-auto-tuning --loglevel error'
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
     $child = [Diagnostics.Process]::Start($start)

@@ -26,7 +26,7 @@ try {
       </div>
       <div class="brand-info">
         <strong class="brand-name">txlite</strong>
-        <span class="brand-ver" id="brand-version">v0.3.1</span>
+        <span class="brand-ver" id="brand-version">v0.4.0</span>
       </div>
     </div>
 
@@ -55,7 +55,7 @@ try {
           <span class="dot" id="state-dot"></span>
           <span id="state-text">未连接</span>
         </span>
-        <span class="transport-chip" id="transport-chip" title="当前传输协议">AUTO</span>
+        <span class="transport-chip" id="transport-chip" title="当前传输协议">TCP</span>
       </div>
 
       <div class="active-node-name" id="active-node-name">未选择节点</div>
@@ -193,7 +193,7 @@ try {
       <header class="view-header">
         <div class="view-title-group">
           <h1>代理设置</h1>
-          <span class="muted-sub">配置分流例外、传输协议、拥塞控制与界面外观</span>
+          <span class="muted-sub">配置分流例外、防污染 DNS、TCP 传输模式与界面外观</span>
         </div>
       </header>
 
@@ -253,35 +253,19 @@ try {
           <article class="card">
             <div class="card-head">
               <div>
-                <h2>传输协议与 QUIC 加速</h2>
-                <p class="card-desc">调整传输层与下载拥塞控制策略（需断开连接后修改）。</p>
+                <h2>TCP 传输模式</h2>
+                <p class="card-desc">选择 TCP 隧道传输方式（需断开连接后修改）。</p>
               </div>
               <button type="button" id="save-transport" class="btn btn-accent">保存传输</button>
             </div>
-            <div class="field-row">
-              <label class="field">
-                <span class="field-label">传输方式</span>
-                <select id="set-transport">
-                  <option value="auto">自动（优先 QUIC，不通时回退 TCP 多通道）</option>
-                  <option value="quic">仅 QUIC（UDP）</option>
-                  <option value="h2">仅 TCP（HTTP/2 4 路并发）</option>
-                </select>
-              </label>
-              <label class="field">
-                <span class="field-label">下载带宽（Mbps，0 为自动 BBR 激进模式）</span>
-                <input id="set-bandwidth" type="number" min="0" max="1000" step="1" value="0">
-              </label>
-            </div>
-            <div class="preset-row">
-              <span class="field-label">宽带提速预设：</span>
-              <button type="button" class="chip" data-bw-preset="0">自动（BBR 激进）</button>
-              <button type="button" class="chip" data-bw-preset="100">100M</button>
-              <button type="button" class="chip" data-bw-preset="200">200M</button>
-              <button type="button" class="chip" data-bw-preset="300">300M</button>
-              <button type="button" class="chip" data-bw-preset="500">500M</button>
-              <button type="button" class="chip" data-bw-preset="1000">1000M</button>
-            </div>
-            <p class="field-note">看电视/下大文件晚高峰丢包时，建议点选您宽带实际下载速度（如 200M / 300M / 500M）开启 Brutal 固定速率发包、丢包不降速；请勿高于实际宽带，填 0 自动启用 BBR 激进模式。</p>
+            <label class="field">
+              <span class="field-label">传输方式</span>
+              <select id="set-transport">
+                <option value="tcp">TCP 直连多通道（推荐，极速无队头阻塞）</option>
+                <option value="h2">TCP 多路复用（HTTP/2 6 路并发载波）</option>
+              </select>
+            </label>
+            <p class="field-note">直连模式为每条连接分配独立 TLS 1.3 TCP 通道并内置预热连接池，彻底消除 HTTP/2 队头阻塞与单连接拥塞瓶颈，下载大文件和看 4K 视频速度更快；若服务端为旧版会自动平滑回退到 HTTP/2。</p>
           </article>
 
           <article class="card">

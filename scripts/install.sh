@@ -35,17 +35,23 @@ download(){
 # start whenever the user pauses between pages (tcp_slow_start_after_idle).
 enable_bbr(){
   local conf=/etc/sysctl.d/99-txlite-bbr.conf
-  # Enlarge TCP/UDP socket buffers (16 MB) for high-BDP QUIC/HTTP2 downloads and 4K streaming.
+  # Enlarge Linux TCP buffers (32 MB) and tune high-BDP cross-border TCP throughput.
   { printf '%s\n' \
     'net.ipv4.tcp_slow_start_after_idle = 0' \
     'net.ipv4.tcp_mtu_probing = 1' \
-    'net.core.rmem_max = 16777216' \
-    'net.core.wmem_max = 16777216' \
-    'net.core.rmem_default = 1048576' \
-    'net.core.wmem_default = 1048576' \
-    'net.core.netdev_max_backlog = 16384' \
-    'net.ipv4.tcp_rmem = 4096 131072 16777216' \
-    'net.ipv4.tcp_wmem = 4096 131072 16777216' \
+    'net.ipv4.tcp_window_scaling = 1' \
+    'net.ipv4.tcp_sack = 1' \
+    'net.ipv4.tcp_fastopen = 3' \
+    'net.ipv4.tcp_tw_reuse = 1' \
+    'net.core.rmem_max = 33554432' \
+    'net.core.wmem_max = 33554432' \
+    'net.core.rmem_default = 262144' \
+    'net.core.wmem_default = 262144' \
+    'net.core.netdev_max_backlog = 32768' \
+    'net.core.somaxconn = 8192' \
+    'net.ipv4.tcp_max_syn_backlog = 8192' \
+    'net.ipv4.tcp_rmem = 4096 262144 33554432' \
+    'net.ipv4.tcp_wmem = 4096 262144 33554432' \
     >/etc/sysctl.d/99-txlite-tcp.conf && chmod 644 /etc/sysctl.d/99-txlite-tcp.conf; } 2>/dev/null || true
   sysctl -p /etc/sysctl.d/99-txlite-tcp.conf >/dev/null 2>&1 || true
   modprobe tcp_bbr >/dev/null 2>&1 || true
@@ -89,8 +95,8 @@ UNIT
 }
 
 ports(){ python3 -c "import json;c=json.load(open('$DIR/config.json'));print(c['port'],c['panel_port'])" 2>/dev/null || true; }
-# rules lists proto:port pairs: the proxy (TCP, and UDP for QUIC) and the panel.
-rules(){ local port panel; read -r port panel <<<"$(ports)"; test -n "$port" && echo "tcp:$port udp:$port tcp:$panel"; }
+# rules lists proto:port pairs: the TCP proxy and the HTTPS panel.
+rules(){ local port panel; read -r port panel <<<"$(ports)"; test -n "$port" && echo "tcp:$port tcp:$panel"; }
 
 # iptables_ports insert|delete: images such as Oracle Cloud's end INPUT with a
 # REJECT rule, so a new port stays closed until it is accepted before that rule.
@@ -119,7 +125,7 @@ open_firewall(){
     for r in $(rules); do ufw allow "${r#*:}/${r%%:*}" >/dev/null && echo "ufw 已放行 ${r#*:}/${r%%:*}"; done
   fi
   iptables_ports insert
-  echo "如果使用云服务器，请在安全组放行 TCP $port 和 UDP $port（代理，UDP 用于 QUIC）以及 TCP $panel（面板）。"
+  echo "如果使用云服务器，请在安全组放行 TCP $port（代理）以及 TCP $panel（面板）。"
 }
 
 install_all(){

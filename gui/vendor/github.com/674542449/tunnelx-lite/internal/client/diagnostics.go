@@ -259,7 +259,7 @@ func (m *Mux) SnapshotDiagnostics() {
 	}
 	m.flowMu.Unlock()
 	s := &m.Stats
-	l.Record("heartbeat", map[string]any{"scope": "client", "active_connections": len(flows), "uploaded_bytes": s.Uploaded.Load(), "downloaded_bytes": s.Downloaded.Load(), "h2_streams": s.H2Streams.Load(), "h2_dials": s.H2Dials.Load(), "h2_retired": s.H2Retired.Load(), "h2_retries": s.H2Retries.Load(), "udp_dropped": s.UDPDropped.Load(), "logging": l.Status()})
+	l.Record("heartbeat", map[string]any{"scope": "client", "active_connections": len(flows), "uploaded_bytes": s.Uploaded.Load(), "downloaded_bytes": s.Downloaded.Load(), "tcp_streams": s.TCPStreams.Load(), "tcp_dials": s.TCPDials.Load(), "h2_streams": s.H2Streams.Load(), "h2_dials": s.H2Dials.Load(), "h2_retired": s.H2Retired.Load(), "h2_retries": s.H2Retries.Load(), "udp_dropped": s.UDPDropped.Load(), "logging": l.Status()})
 	for _, f := range flows {
 		up, down := f.up.Load(), f.down.Load()
 		f.mu.Lock()

@@ -7,20 +7,22 @@ import (
 	"net"
 	"sync"
 	"time"
-
-	"github.com/674542449/tunnelx-lite/internal/wire"
 )
 
 // OpenTCPFast sends CONNECT and returns at once, so the application's first
 // bytes (usually a TLS ClientHello) travel right behind the request instead
 // of one round trip later. A refused or failed CONNECT surfaces as a read
-// error on the tunnel, like Hysteria's fastOpen.
+// error on the tunnel.
 func (m *Mux) OpenTCPFast(ctx context.Context, target string) (*Tunnel, error) {
 	if _, p, e := net.SplitHostPort(target); e != nil || p == "" {
 		return nil, errors.New("invalid target")
 	}
-	if t, ok, e := m.openOverQUIC(ctx, wire.QUICTCP, target, false); ok {
+	if m.wantsDirectTCP() {
+		t, e := m.openDirectTCPFast(ctx, target)
 		if e != nil {
+			fields := errorFields(e)
+			fields["stage"] = "open_tcp"
+			m.event(ctx, "connection_open_failed", fields)
 			flowFrom(ctx).failure("open_tcp", e)
 		}
 		return t, e

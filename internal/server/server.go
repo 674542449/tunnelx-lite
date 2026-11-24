@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -34,9 +35,21 @@ type Server struct {
 	Access         AccessController
 	dns            *dnsCache
 	accessLog      *slog.Logger
+	serveCtxMu     sync.RWMutex
+	serveCtx       context.Context
 	// upLimit and downLimit apply BandwidthLimit to the whole server, so a
 	// client cannot exceed it by opening more connections.
 	upLimit, downLimit *Limiter
+}
+
+func (s *Server) serverContext() context.Context {
+	s.serveCtxMu.RLock()
+	ctx := s.serveCtx
+	s.serveCtxMu.RUnlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 func New(c config.Server) (*Server, error) {
@@ -50,7 +63,7 @@ func New(c config.Server) (*Server, error) {
 	s := &Server{Config: c, auth: config.NewAuth(c.Tokens), slots: make(chan struct{}, c.MaxConnections)}
 	s.Resolver = DefaultLookup
 	if c.DNSCacheTTL > 0 {
-		s.dns = &dnsCache{ttl: time.Duration(c.DNSCacheTTL) * time.Second, entries: map[string]dnsCacheEntry{}}
+		s.dns = &dnsCache{ttl: time.Duration(c.DNSCacheTTL) * time.Second, entries: map[string]dnsCacheEntry{}, inflight: map[string]*dnsInflight{}}
 		s.Resolver = s.dns.Lookup
 	}
 	_ = tlsCfg
@@ -61,6 +74,11 @@ func New(c config.Server) (*Server, error) {
 }
 
 func (s *Server) Serve(ctx context.Context) error {
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
+	s.serveCtxMu.Lock()
+	s.serveCtx = serveCtx
+	s.serveCtxMu.Unlock()
 	if s.Config.AccessLog != "" {
 		f, e := os.OpenFile(s.Config.AccessLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		if e != nil {
@@ -74,8 +92,8 @@ func (s *Server) Serve(ctx context.Context) error {
 		return e
 	}
 	tlsCfg.NextProtos = []string{"h2", "http/1.1"}
-	s.HTTP = &http.Server{Addr: s.Config.Listen, TLSConfig: tlsCfg, Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10}
-	if e = http2.ConfigureServer(s.HTTP, &http2.Server{MaxConcurrentStreams: 256, MaxUploadBufferPerConnection: 16 << 20, MaxUploadBufferPerStream: 4 << 20, IdleTimeout: 120 * time.Second}); e != nil {
+	s.HTTP = &http.Server{Addr: s.Config.Listen, TLSConfig: tlsCfg, Handler: s, ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10}
+	if e = http2.ConfigureServer(s.HTTP, &http2.Server{MaxConcurrentStreams: 512, MaxReadFrameSize: 256 << 10, MaxUploadBufferPerConnection: 32 << 20, MaxUploadBufferPerStream: 8 << 20, IdleTimeout: 120 * time.Second}); e != nil {
 		return e
 	}
 	errs := make(chan error, 1)
@@ -87,14 +105,30 @@ func (s *Server) Serve(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	go func() { errs <- s.HTTP.ServeTLS(ln, "", "") }()
+	go func() { errs <- s.HTTP.ServeTLS(tcpTuneListener{ln}, "", "") }()
 	select {
 	case <-ctx.Done():
 	case e = <-errs:
 	}
-	// Close cancels live tunnels; do not wait indefinitely for long-lived CONNECT streams.
+	// Cancel hijacked direct TCP tunnels and close HTTP/2 streams promptly.
+	cancelServe()
 	s.HTTP.Close()
 	return e
+}
+
+type tcpTuneListener struct{ net.Listener }
+
+func (l tcpTuneListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	if tcp, ok := c.(*net.TCPConn); ok {
+		_ = tcp.SetNoDelay(true)
+		_ = tcp.SetKeepAlive(true)
+		_ = tcp.SetKeepAlivePeriod(30 * time.Second)
+	}
+	return c, nil
 }
 func (s *Server) public(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -146,7 +180,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.public(w, r)
 		return
 	}
-	if r.ProtoMajor != 2 {
+	proto := r.Header.Get(":protocol")
+	if r.ProtoMajor != 2 && !(r.ProtoMajor == 1 && proto == "") {
 		http.Error(w, "HTTP Version Not Supported", 505)
 		return
 	}
@@ -159,7 +194,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Active.Add(1)
 	defer s.Active.Add(-1)
-	proto := r.Header.Get(":protocol")
 	target := r.Host
 	if proto != "" {
 		if proto != "connect-udp" {
@@ -207,6 +241,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.Config.MaxLifetime > 0 {
 		lt := time.AfterFunc(time.Duration(s.Config.MaxLifetime)*time.Second, func() { conn.Close() })
 		defer lt.Stop()
+	}
+	if r.ProtoMajor == 1 {
+		s.serveDirectTCP(w, r, target, conn)
+		return
 	}
 	w.WriteHeader(200)
 	http.NewResponseController(w).Flush()
@@ -273,6 +311,96 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // h2EOFGrace bounds how long an HTTP/2 flow whose target has closed waits for
 // the client's upload before ending the response.
 var h2EOFGrace = 2 * time.Second
+
+// serveDirectTCP hijacks an HTTP/1.1 CONNECT over TLS 1.3 into a raw bidirectional
+// stream: one dedicated TCP socket + kernel BBR congestion window per flow, with
+// zero HTTP/2 framing, flow-control window, or head-of-line blocking overhead.
+func (s *Server) serveDirectTCP(w http.ResponseWriter, r *http.Request, target string, conn net.Conn) {
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "Internal Server Error", 500)
+		return
+	}
+	clientConn, rw, e := hj.Hijack()
+	if e != nil {
+		return
+	}
+	defer clientConn.Close()
+	_ = clientConn.SetDeadline(time.Time{})
+	if _, e = io.WriteString(clientConn, "HTTP/1.1 200 Connection Established\r\nTunnelx-Version: "+config.Version+"\r\n\r\n"); e != nil {
+		return
+	}
+	stopReq := context.AfterFunc(r.Context(), func() { conn.Close(); clientConn.Close() })
+	defer stopReq()
+	stopSrv := context.AfterFunc(s.serverContext(), func() { conn.Close(); clientConn.Close() })
+	defer stopSrv()
+
+	idle := time.Duration(s.Config.IdleTimeout) * time.Second
+	icUp := newIdleConn(conn, idle)
+	icClient := newIdleConn(clientConn, idle)
+	var clientReader io.Reader = icClient
+	if n := rw.Reader.Buffered(); n > 0 {
+		if peeked, pe := rw.Reader.Peek(n); pe == nil && len(peeked) > 0 {
+			early := append([]byte(nil), peeked...)
+			clientReader = io.MultiReader(bytes.NewReader(early), icClient)
+		}
+	}
+
+	upLimit, downLimit := s.limiters(r.Context())
+	var upBytes, downBytes atomic.Int64
+	proxyStart := time.Now()
+	up := make(chan error, 1)
+	go func() {
+		buf := getRelayBuf()
+		defer putRelayBuf(buf)
+		var reader io.Reader = clientReader
+		if upLimit != nil {
+			reader = throttledReader{r: reader, l: upLimit, ctx: r.Context()}
+		}
+		if p := permit(r.Context()); p != nil {
+			reader = accountReader{reader: reader, access: p, upload: true}
+		}
+		reader = countReader{r: reader, n: &upBytes, total: &s.Uploaded}
+		_, err := io.CopyBuffer(icUp, reader, *buf)
+		if err == nil {
+			if tcp, ok := conn.(*net.TCPConn); ok {
+				_ = tcp.CloseWrite()
+			}
+		} else {
+			conn.Close()
+		}
+		up <- err
+	}()
+
+	var downReader io.Reader = icUp
+	if downLimit != nil {
+		downReader = throttledReader{r: downReader, l: downLimit, ctx: r.Context()}
+	}
+	if p := permit(r.Context()); p != nil {
+		downReader = accountReader{reader: downReader, access: p}
+	}
+	downReader = countReader{r: downReader, n: &downBytes, total: &s.Downloaded}
+	downBuf := getRelayBuf()
+	_, downErr := io.CopyBuffer(icClient, downReader, *downBuf)
+	putRelayBuf(downBuf)
+	if downErr == nil {
+		type closeWriter interface{ CloseWrite() error }
+		if cw, ok := clientConn.(closeWriter); ok {
+			_ = cw.CloseWrite()
+		}
+	} else {
+		conn.Close()
+		clientConn.Close()
+	}
+	select {
+	case <-up:
+	case <-r.Context().Done():
+	case <-time.After(h2EOFGrace):
+	}
+	if s.accessLog != nil {
+		s.accessLog.Info("proxy", "target", target, "proto", "tcp/direct", "upload", upBytes.Load(), "download", downBytes.Load(), "duration_ms", time.Since(proxyStart).Milliseconds())
+	}
+}
 
 func UDPAddress(u *url.URL) (string, error) {
 	p := strings.Split(u.EscapedPath(), "/")
@@ -363,9 +491,9 @@ func (w flushWriter) Write(p []byte) (int, error) {
 	return n, e
 }
 
-// 128 KiB pooled relay buffers cut syscall, Flush, and GC overhead 4x during
-// bulk downloads and 4K video streaming.
-var relayBufPool = sync.Pool{New: func() any { b := make([]byte, 128<<10); return &b }}
+// 256 KiB pooled relay buffers minimize syscall and GC overhead during
+// high-speed TCP downloads and 4K video streaming.
+var relayBufPool = sync.Pool{New: func() any { b := make([]byte, 256<<10); return &b }}
 
 func getRelayBuf() *[]byte  { return relayBufPool.Get().(*[]byte) }
 func putRelayBuf(b *[]byte) { relayBufPool.Put(b) }
@@ -502,13 +630,19 @@ func LogError(e error) {
 }
 
 type dnsCache struct {
-	mu      sync.RWMutex
-	entries map[string]dnsCacheEntry
-	ttl     time.Duration
+	mu       sync.RWMutex
+	entries  map[string]dnsCacheEntry
+	inflight map[string]*dnsInflight
+	ttl      time.Duration
 }
 type dnsCacheEntry struct {
 	ips     []net.IP
 	expires time.Time
+}
+type dnsInflight struct {
+	done chan struct{}
+	ips  []net.IP
+	err  error
 }
 
 func (c *dnsCache) Lookup(ctx context.Context, host string) ([]net.IP, error) {
@@ -518,28 +652,59 @@ func (c *dnsCache) Lookup(ctx context.Context, host string) ([]net.IP, error) {
 		return e.ips, nil
 	}
 	c.mu.RUnlock()
-	ips, err := DefaultLookup(ctx, host)
-	if err != nil {
-		return nil, err
-	}
+
 	c.mu.Lock()
-	if len(c.entries) >= 4096 {
-		now := time.Now()
-		for k, v := range c.entries {
-			if now.After(v.expires) {
-				delete(c.entries, k)
-			}
-		}
-		if len(c.entries) >= 4096 {
-			for k := range c.entries {
-				delete(c.entries, k)
-				break
-			}
+	if e, ok := c.entries[host]; ok && time.Now().Before(e.expires) {
+		c.mu.Unlock()
+		return e.ips, nil
+	}
+	if c.inflight == nil {
+		c.inflight = map[string]*dnsInflight{}
+	}
+	if fl, ok := c.inflight[host]; ok {
+		c.mu.Unlock()
+		select {
+		case <-fl.done:
+			return fl.ips, fl.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
-	c.entries[host] = dnsCacheEntry{ips: ips, expires: time.Now().Add(c.ttl)}
+	fl := &dnsInflight{done: make(chan struct{})}
+	c.inflight[host] = fl
 	c.mu.Unlock()
-	return ips, nil
+
+	// Decouple shared lookup from a single caller's cancellation with a bounded timeout.
+	lookupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ips, err := DefaultLookup(lookupCtx, host)
+	cancel()
+	fl.ips, fl.err = ips, err
+
+	c.mu.Lock()
+	delete(c.inflight, host)
+	if err == nil {
+		if len(c.entries) >= 4096 {
+			now := time.Now()
+			for k, v := range c.entries {
+				if now.After(v.expires) {
+					delete(c.entries, k)
+				}
+			}
+			if len(c.entries) >= 4096 {
+				for k := range c.entries {
+					delete(c.entries, k)
+					break
+				}
+			}
+		}
+		c.entries[host] = dnsCacheEntry{ips: ips, expires: time.Now().Add(c.ttl)}
+	}
+	c.mu.Unlock()
+	close(fl.done)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return ips, err
 }
 
 // Limiter is a token bucket in bytes per second. One limiter may be shared by
@@ -685,7 +850,7 @@ func dialTarget(ctx context.Context, ips []net.IP, port string) (net.Conn, error
 				results <- dialResult{c, e}
 			}()
 			if started < len(ips) {
-				next.Reset(250 * time.Millisecond)
+				next.Reset(120 * time.Millisecond)
 			}
 		case r := <-results:
 			if r.e == nil {

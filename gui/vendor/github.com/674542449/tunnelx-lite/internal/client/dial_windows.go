@@ -10,6 +10,24 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// tuneCarrierTCP optimizes outbound TCP sockets on Windows where the default
+// Winsock AFD receive/send buffers can throttle high-BDP cross-border links.
+func tuneCarrierTCP(c net.Conn) {
+	if tcp, ok := c.(*net.TCPConn); ok {
+		_ = tcp.SetNoDelay(true)
+		_ = tcp.SetReadBuffer(8 << 20)
+		_ = tcp.SetWriteBuffer(4 << 20)
+	}
+}
+
+func tuneLocalTCP(c net.Conn) {
+	if tcp, ok := c.(*net.TCPConn); ok {
+		_ = tcp.SetNoDelay(true)
+		_ = tcp.SetReadBuffer(4 << 20)
+		_ = tcp.SetWriteBuffer(4 << 20)
+	}
+}
+
 const (
 	ipUnicastIf   = 31 // IP_UNICAST_IF (ws2ipdef.h): expects interface index in network byte order (htonl)
 	ipv6UnicastIf = 31 // IPV6_UNICAST_IF (ws2ipdef.h): expects interface index in host byte order

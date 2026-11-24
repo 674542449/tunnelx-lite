@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -41,10 +42,6 @@ type Client struct {
 	H2MaxAge       int    `json:"h2_max_age_seconds,omitempty"`
 	H2RetryNew     bool   `json:"h2_retry_new_connection,omitempty"`
 	DeviceID       string `json:"device_id,omitempty"`
-	// QUICCongestion is how the server sends towards this client over QUIC:
-	// "" or "bbr", "bbr-aggressive", or "brutal" at DownMbps.
-	QUICCongestion string `json:"quic_congestion,omitempty"`
-	DownMbps       int    `json:"down_mbps,omitempty"`
 }
 type Server struct {
 	ManagedOnly           bool                `json:"managed_only,omitempty"`
@@ -68,7 +65,6 @@ type Server struct {
 	AccessLog             string              `json:"access_log,omitempty"`
 	OutboundIP            string              `json:"outbound_ip,omitempty"`
 	Network               string              `json:"network,omitempty"` // "", "tcp4" or "tcp6": inbound address family
-	QUIC                  bool                `json:"quic,omitempty"`    // also serve QUIC on the UDP port of the same number
 }
 type ECHKey struct {
 	Config     []byte `json:"config"`
@@ -120,10 +116,10 @@ func (c *Client) Validate() error {
 	if c.Transport == "" {
 		c.Transport = "h2"
 	}
-	// "h2" is HTTP/2 over TCP only; "quic" is QUIC over UDP only; "auto"
-	// prefers QUIC and falls back to HTTP/2 while UDP does not get through.
-	if c.Transport != "h2" && c.Transport != "quic" && c.Transport != "auto" {
-		return errors.New("transport must be h2, quic or auto")
+	// "tcp" opens a dedicated TLS 1.3 TCP tunnel per flow (no H2 HoL blocking);
+	// "h2" multiplexes streams over pooled HTTP/2 over TCP connections.
+	if c.Transport != "tcp" && c.Transport != "h2" {
+		return errors.New("transport must be tcp or h2")
 	}
 	if c.Privacy == "" {
 		c.Privacy = "normal"
@@ -175,7 +171,7 @@ func (c *Client) Validate() error {
 	if c.H2PingTimeout == 0 {
 		c.H2PingTimeout = 5
 	}
-	if c.H2Connections < 1 || c.H2Connections > 8 || c.H2ReadIdle < 1 || c.H2ReadIdle > 120 || c.H2PingTimeout < 1 || c.H2PingTimeout > 30 || (c.H2MaxAge != 0 && (c.H2MaxAge < 10 || c.H2MaxAge > 3600)) {
+	if c.H2Connections < 1 || c.H2Connections > 16 || c.H2ReadIdle < 1 || c.H2ReadIdle > 120 || c.H2PingTimeout < 1 || c.H2PingTimeout > 30 || (c.H2MaxAge != 0 && (c.H2MaxAge < 10 || c.H2MaxAge > 3600)) {
 		return errors.New("invalid H2 pool, health timeout or maximum age")
 	}
 	return nil
@@ -284,20 +280,58 @@ func (c Client) TLS() (*tls.Config, error) {
 	}
 	return t, nil
 }
+type cachedCert struct {
+	cert      *tls.Certificate
+	certMtime int64
+	certSize  int64
+	keyMtime  int64
+	keySize   int64
+}
+
 func (s Server) TLS() (*tls.Config, error) {
 	cert, e := tls.LoadX509KeyPair(s.CertFile, s.KeyFile)
 	if e != nil {
 		return nil, e
 	}
 	t := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}, CurvePreferences: []tls.CurveID{tls.X25519}}
-	// Certificate files are refreshed by the deployment timer; reload on each handshake.
+	// Cache parsed certificates in memory and only reload when file mtime/size
+	// changes, avoiding disk I/O + PEM/X.509 parsing on every TLS 1.3 handshake.
+	var cacheMu sync.RWMutex
+	cache := map[string]cachedCert{}
+	loadCached := func(certFile, keyFile string) (*tls.Certificate, error) {
+		ci, err1 := os.Stat(certFile)
+		ki, err2 := os.Stat(keyFile)
+		if err1 != nil {
+			return nil, err1
+		}
+		if err2 != nil {
+			return nil, err2
+		}
+		k := certFile + "\x00" + keyFile
+		cm, cs := ci.ModTime().UnixNano(), ci.Size()
+		km, ks := ki.ModTime().UnixNano(), ki.Size()
+		cacheMu.RLock()
+		if entry, ok := cache[k]; ok && entry.certMtime == cm && entry.certSize == cs && entry.keyMtime == km && entry.keySize == ks {
+			cacheMu.RUnlock()
+			return entry.cert, nil
+		}
+		cacheMu.RUnlock()
+		loaded, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, err
+		}
+		ptr := &loaded
+		cacheMu.Lock()
+		cache[k] = cachedCert{cert: ptr, certMtime: cm, certSize: cs, keyMtime: km, keySize: ks}
+		cacheMu.Unlock()
+		return ptr, nil
+	}
 	t.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		certFile, keyFile := s.CertFile, s.KeyFile
 		if s.InnerName != "" && hello.ServerName == s.InnerName {
 			certFile, keyFile = s.InnerCertFile, s.InnerKeyFile
 		}
-		c, e := tls.LoadX509KeyPair(certFile, keyFile)
-		return &c, e
+		return loadCached(certFile, keyFile)
 	}
 	if s.ECHKeyFile != "" {
 		var key ECHKey

@@ -8,7 +8,7 @@ package http2
 
 // inflowMinRefresh is the minimum number of bytes we'll send for a
 // flow control window update.
-const inflowMinRefresh = 4 << 10
+const inflowMinRefresh = 64 << 10
 
 // inflow accounts for an inbound flow control window.
 // It tracks both the latest window sent to the peer (used for enforcement)

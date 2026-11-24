@@ -12,22 +12,6 @@ import (
 )
 
 func probeHealth(ctx context.Context, m *client.Mux) string {
-	if m.Config.Transport == "quic" {
-		// The gateway answers an authenticated request for a refused target.
-		t, err := m.OpenTCP(ctx, "127.0.0.1:9")
-		var refused *client.RequestError
-		if err == nil {
-			t.Close()
-			return ""
-		}
-		if errors.As(err, &refused) && refused.Known {
-			return ""
-		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "timeout"
-		}
-		return "network_or_tls"
-	}
 	r, err := m.PublicGET(ctx)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -223,9 +207,8 @@ func (e *Engine) DiagnosticsReport() (string, error) {
 	health.Gateway.ErrorKind = safeHealthKind(health.Gateway.ErrorKind)
 	health.DNS.ErrorKind = safeHealthKind(health.DNS.ErrorKind)
 	health.Egress.ErrorKind = safeHealthKind(health.Egress.ErrorKind)
-	report := map[string]any{"report_version": 1, "client_version": Version, "platform": runtime.GOOS, "generated_at": time.Now().UTC().Format(time.RFC3339), "transport": "h2", "connection_state": s["connection_state"], "connection_stage": safeStage(s["connection_stage"].(string)), "health": health, "health_scope": "gateway_tls_ech_only", "system_proxy_saved": s["system_proxy"], "redaction": "Keys, server addresses, paths and browsing history are excluded."}
+	report := map[string]any{"report_version": 1, "client_version": Version, "platform": runtime.GOOS, "generated_at": time.Now().UTC().Format(time.RFC3339), "transport": "tcp", "connection_state": s["connection_state"], "connection_stage": safeStage(s["connection_stage"].(string)), "health": health, "health_scope": "gateway_tls_ech_only", "system_proxy_saved": s["system_proxy"], "redaction": "Keys, server addresses, paths and browsing history are excluded."}
 	report["transport_preference"] = s["transport_preference"]
-	report["down_mbps"] = s["preferences"].(Preferences).DownMbps
 	report["proxy_mode"] = s["preferences"].(Preferences).ProxyMode
 	report["tun_enabled"] = s["tun_enabled"]
 	report["tun_active"] = s["tun_active"]

@@ -158,11 +158,7 @@ func printInfo(d lite.Dir) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	v4, v6 := lite.PublicIPs(ctx)
-	quic := fmt.Sprintf("，%d/UDP（QUIC）", c.Port)
-	if c.NoQUIC {
-		quic = "（QUIC 已关闭）"
-	}
-	fmt.Printf("名称：%s\n代理端口：%d/TCP%s\n面板端口：%d/TCP\n", c.Name, c.Port, quic, c.PanelPort)
+	fmt.Printf("名称：%s\n代理端口：%d/TCP\n面板端口：%d/TCP\n", c.Name, c.Port, c.PanelPort)
 	for _, u := range panelURLs(c, v4, v6) {
 		fmt.Println("面板地址：" + u)
 	}

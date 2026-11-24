@@ -2,9 +2,9 @@
 
 一个可以单独使用的代理服务：服务器一键安装，复制分享链接，粘贴进 Windows 客户端就能用。没有账号、没有订阅后台。
 
-- **协议**：两种传输，同一个端口号——QUIC（UDP，BBR 拥塞控制，每个连接一条独立的流，丢包时网页仍然很快）和 HTTP/2 CONNECT（TCP）；都用 TLS 1.3 + ECH（加密 SNI），客户端按证书公钥指纹校验服务器，不需要域名。客户端默认「自动」：优先 QUIC，UDP 不通时自动改用 TCP。
-- **服务端**：Ubuntu / Debian，入站可选双栈 / 仅 IPv4 / 仅 IPv6，出站可选自动、IPv4 优先、IPv6 优先、仅 IPv4、仅 IPv6；自带 HTTPS 管理面板和 `txlite` 命令行菜单；安装时自动开启 BBR + fq。
-- **客户端**：Windows 图形界面（类似 v2rayN），支持绕过大陆、全局代理、TUN 模式。
+- **协议**：纯 TCP（TLS 1.3 + ECH 加密 SNI），客户端按证书公钥指纹校验服务器，不需要域名。默认使用 **TCP 直连多通道**（每条连接独立 TLS 1.3 TCP 通道 + 预热连接池，无 HTTP/2 队头阻塞与单连接拥塞瓶颈，下载大文件与看 4K 视频更流畅），并支持 **HTTP/2 多路复用** 模式与旧版服务端自动兼容。
+- **服务端**：Ubuntu / Debian，入站可选双栈 / 仅 IPv4 / 仅 IPv6，出站可选自动、IPv4 优先、IPv6 优先、仅 IPv4、仅 IPv6；自带 HTTPS 管理面板和 `txlite` 命令行菜单；安装/更新时自动开启 BBR + fq 与 32 MB TCP 缓冲调优。
+- **客户端**：Windows 图形界面（默认以管理员权限启动，可直接启用 TUN 无需重启），支持绕过大陆、全局代理、TUN 模式与防污染 DNS 覆写。
 
 ## 服务端安装
 
@@ -19,7 +19,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/674542449/tunnelx-lite/main/
 - 面板地址（`https://服务器IP:面板端口/随机路径/`）和面板密码
 - IPv4 / IPv6 分享链接（`txlite://…`）
 
-云服务器请在安全组放行代理端口的 **TCP 和 UDP**（UDP 用于 QUIC）以及面板端口的 TCP。UDP 没放行也能用，客户端会自动改用 TCP。
+云服务器请在安全组放行代理端口的 **TCP** 以及面板端口的 **TCP**（无需放行 UDP）。
 
 端口默认随机。想指定端口：
 
@@ -71,11 +71,10 @@ INBOUND=ipv6 OUTBOUND=ipv6 bash <(curl -fsSL https://raw.githubusercontent.com/6
    - 非 TUN 模式连接时自动设置 Windows 系统代理，断开时恢复原设置；TUN 模式接管全部 TCP/UDP 并通过物理网卡绑定避免直连回环。
    - **防污染 DNS 覆写**（默认开启，可在「代理设置」自定义）：国内域名默认通过加密阿里云公共 DNS DoH（`223.5.5.5` / `223.6.6.6`）与腾讯 DNSPod DoH（`1.12.12.12`）解析，海外与未知域名通过加密隧道远端 DNS 解析（并配合 GeoIP 校验防污染）。
 
-- TUN 模式接管所有应用的 TCP / UDP，需要右键「以管理员身份运行」。
+- 客户端默认以管理员权限启动，可直接开启 TUN 模式接管所有应用的 TCP / UDP，无需重新启动。
 - 不认系统代理的程序，可手动把它的代理设为 SOCKS5 `127.0.0.1:1080` 或 HTTP `127.0.0.1:8088`。
 - 右键或悬浮节点操作：测试延迟、复制分享链接、重命名、删除。
-- 设置里可以填写「下载带宽」：填宽带实际的下载速度（测速结果）后，服务器经 QUIC 按这个速度发送、丢包时不降速（Hysteria2 同款 Brutal），晚高峰线路差时 YouTube 和下载明显更快；不要填得比实际高。填 0 为自动（BBR）。
-- 设置里可以选择传输方式（自动 / 仅 QUIC / 仅 TCP）、填写直连例外域名、配置防污染 DNS 覆写、更新分流规则、恢复系统代理 / TUN、导出脱敏诊断报告。侧边栏显示当前实际使用的传输方式。
+- 设置里可以选择 TCP 传输方式（TCP 直连多通道 / HTTP/2 多路复用）、填写直连例外域名、配置防污染 DNS 覆写、更新分流规则、恢复系统代理 / TUN、导出脱敏诊断报告。侧边栏显示当前实际使用的传输方式。
 - 导入的服务器（含密钥）用 Windows DPAPI 加密保存在 `%LOCALAPPDATA%\txlite`。在程序目录新建 `portable` 文件夹即可改为便携模式。
 
 ## 分享链接格式
@@ -103,4 +102,4 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags=http2legacy -trimpath -ldfl
 
 ## 第三方组件
 
-客户端 TUN 模式使用 [tun2socks](https://github.com/xjasonlyu/tun2socks)（MIT）和 [Wintun](https://www.wintun.net/)，许可证与源码说明在 `gui/runtime`。QUIC 使用 [apernet/quic-go](https://github.com/apernet/quic-go)（quic-go 的分支，支持替换拥塞控制，MIT），BBR 与 Brutal 拥塞控制复制自 [Hysteria](https://github.com/apernet/hysteria)（MIT，许可证在 `internal/congestion`）。分流规则使用 [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)（与 Clash Verge Rev 相同的 geosite / geoip 数据，GPL-3.0），许可证在 `internal/routing/data`。
+客户端 TUN 模式使用 [tun2socks](https://github.com/xjasonlyu/tun2socks)（MIT）和 [Wintun](https://www.wintun.net/)，许可证与源码说明在 `gui/runtime`。分流规则使用 [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)（与 Clash Verge Rev 相同的 geosite / geoip 数据，GPL-3.0），许可证在 `internal/routing/data`。

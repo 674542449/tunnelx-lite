@@ -45,7 +45,7 @@ const (
 	// transportDefaultStreamFlow is how many stream-level flow
 	// control tokens we announce to the peer, and how many bytes
 	// we buffer per stream.
-	transportDefaultStreamFlow = 4 << 20
+	transportDefaultStreamFlow = 16 << 20
 
 	defaultUserAgent = "Go-http-client/2.0"
 
@@ -501,12 +501,12 @@ func (t *Transport) newClientConn(c net.Conn, singleUse bool, internalStateHook 
 
 	// TODO: adjust this writer size to account for frame size +
 	// MTU + crypto/tls record padding.
-	cc.bw = bufio.NewWriter(stickyErrWriter{
+	cc.bw = bufio.NewWriterSize(stickyErrWriter{
 		conn:    c,
 		timeout: conf.WriteByteTimeout,
 		err:     &cc.werr,
-	})
-	cc.br = bufio.NewReader(c)
+	}, 64<<10)
+	cc.br = bufio.NewReaderSize(c, 64<<10)
 	cc.fr = NewFramer(cc.bw, cc.br)
 	cc.fr.SetMaxReadFrameSize(conf.MaxReadFrameSize)
 	if t.CountError != nil {

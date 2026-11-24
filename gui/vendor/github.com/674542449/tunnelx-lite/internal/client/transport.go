@@ -26,32 +26,35 @@ type Stats struct {
 	Uploaded   atomic.Int64
 	Downloaded atomic.Int64
 	UDPDropped atomic.Int64
+	TCPStreams atomic.Int64
+	TCPDials   atomic.Int64
 	H2Streams  atomic.Int64
 	H2Dials    atomic.Int64
 	H2Retired  atomic.Int64
 	H2Retries  atomic.Int64
 }
 type Mux struct {
-	Config      config.Client
-	tls         *tls.Config
-	mu          sync.Mutex
-	h2Mu        sync.Mutex
-	h2Pool      []*h2Carrier
-	h2Cursor    uint64
-	closed      bool
-	Stats       Stats
-	LastECH     atomic.Bool
-	TLSVersion  atomic.Uint32
-	CipherSuite atomic.Uint32
-	LastTCP     atomic.Uint32
-	recorder    atomic.Pointer[diagnostics.Logger]
-	flowMu      sync.Mutex
-	flows       map[string]*flowLog
-	growing     bool // a background carrier dial is in progress; guarded by h2Mu
-	quic        quicState
-	bindAddr    net.Addr // tests only: source address for carrier dials
-	uplinkIfV4  uint32
-	uplinkIfV6  uint32
+	Config            config.Client
+	tls               *tls.Config
+	mu                sync.Mutex
+	h2Mu              sync.Mutex
+	h2Pool            []*h2Carrier
+	h2Cursor          uint64
+	closed            bool
+	Stats             Stats
+	LastECH           atomic.Bool
+	TLSVersion        atomic.Uint32
+	CipherSuite       atomic.Uint32
+	LastTCP           atomic.Uint32
+	recorder          atomic.Pointer[diagnostics.Logger]
+	flowMu            sync.Mutex
+	flows             map[string]*flowLog
+	growing           bool // a background carrier dial is in progress; guarded by h2Mu
+	direct            directPoolState
+	directUnsupported atomic.Bool
+	bindAddr          net.Addr // tests only: source address for carrier dials
+	uplinkIfV4        uint32
+	uplinkIfV6        uint32
 }
 
 // SetUplinkInterface binds carrier dials to the physical uplink interface (used
@@ -86,7 +89,12 @@ func (m *Mux) address() string {
 func (m *Mux) authority() string {
 	return net.JoinHostPort(m.Config.ServerName, strconv.Itoa(m.Config.Port))
 }
-func (m *Mux) Mode() string { return "h2" }
+func (m *Mux) Mode() string {
+	if m.Config.Transport == "tcp" {
+		return "tcp"
+	}
+	return "h2"
+}
 
 func (m *Mux) h2(ctx context.Context) (*http2.ClientConn, error) {
 	// Serialize pool mutation without holding the lifecycle mutex during TCP/TLS dialing.
@@ -217,11 +225,7 @@ func (m *Mux) dialCarrier(ctx context.Context) (*h2Carrier, error) {
 		m.event(ctx, "carrier_dial_failed", fields)
 		return nil, e
 	}
-	if tcp, ok := raw.(*net.TCPConn); ok {
-		_ = tcp.SetNoDelay(true)
-		_ = tcp.SetReadBuffer(4 << 20)
-		_ = tcp.SetWriteBuffer(4 << 20)
-	}
+	tuneCarrierTCP(raw)
 	tc := tls.Client(raw, t)
 	if e = tc.HandshakeContext(ctx); e != nil {
 		raw.Close()
@@ -239,7 +243,7 @@ func (m *Mux) dialCarrier(ctx context.Context) (*h2Carrier, error) {
 	m.LastECH.Store(tc.ConnectionState().ECHAccepted)
 	m.TLSVersion.Store(uint32(tc.ConnectionState().Version))
 	m.CipherSuite.Store(uint32(tc.ConnectionState().CipherSuite))
-	tr := &http2.Transport{MaxHeaderListSize: 16 << 10, ReadIdleTimeout: time.Duration(m.Config.H2ReadIdle) * time.Second, PingTimeout: time.Duration(m.Config.H2PingTimeout) * time.Second}
+	tr := &http2.Transport{MaxReadFrameSize: 256 << 10, MaxHeaderListSize: 16 << 10, ReadIdleTimeout: time.Duration(m.Config.H2ReadIdle) * time.Second, PingTimeout: time.Duration(m.Config.H2PingTimeout) * time.Second}
 	cc, e := tr.NewClientConn(c)
 	if e != nil {
 		c.Close()
@@ -454,14 +458,23 @@ func (m *Mux) openH2(ctx context.Context, h *http2.ClientConn, r *http.Request, 
 	return t, nil
 }
 func (m *Mux) OpenTCP(ctx context.Context, target string) (*Tunnel, error) {
-	if t, ok, e := m.openOverQUIC(ctx, wire.QUICTCP, target, true); ok {
-		if e != nil {
-			fields := errorFields(e)
-			fields["stage"] = "open_tcp"
-			m.event(ctx, "connection_open_failed", fields)
-			flowFrom(ctx).failure("open_tcp", e)
+	if _, p, e := net.SplitHostPort(target); e != nil || p == "" {
+		return nil, errors.New("invalid target")
+	}
+	if m.wantsDirectTCP() {
+		t, e := m.openDirectTCP(ctx, target)
+		if !errors.Is(e, errDirectUnsupported) {
+			if e == nil {
+				flowFrom(ctx).openedOn(t)
+				m.LastTCP.Store(1)
+			} else {
+				fields := errorFields(e)
+				fields["stage"] = "open_tcp"
+				m.event(ctx, "connection_open_failed", fields)
+				flowFrom(ctx).failure("open_tcp", e)
+			}
+			return t, e
 		}
-		return t, e
 	}
 	t, e := m.open(ctx, target, false)
 	if e == nil {
@@ -476,10 +489,7 @@ func (m *Mux) OpenTCP(ctx context.Context, target string) (*Tunnel, error) {
 	return t, e
 }
 func (m *Mux) OpenUDP(ctx context.Context, target string) (*wire.PacketStream, error) {
-	t, ok, e := m.openOverQUIC(ctx, wire.QUICUDP, target, true)
-	if !ok {
-		t, e = m.open(ctx, target, true)
-	}
+	t, e := m.open(ctx, target, true)
 	if e != nil {
 		fields := errorFields(e)
 		fields["stage"] = "open_udp"
@@ -494,7 +504,7 @@ func (m *Mux) Close() error {
 	m.mu.Lock()
 	m.closed = true
 	m.mu.Unlock()
-	m.closeQUIC()
+	m.closeDirectPool()
 	m.h2Mu.Lock()
 	defer m.h2Mu.Unlock()
 	for _, entry := range m.h2Pool {
@@ -508,7 +518,7 @@ func (m *Mux) PublicGET(ctx context.Context) (*http.Response, error) {
 	// Connection checks use their own carriers. Closing or canceling a diagnostic
 	// response must not disturb long-lived application connections.
 	c := m.Config
-	c.Transport = m.Mode()
+	c.Transport = "h2"
 	ctx = context.WithValue(ctx, scopeKey{}, "manual_probe")
 	probe, e := New(c)
 	if e != nil {
