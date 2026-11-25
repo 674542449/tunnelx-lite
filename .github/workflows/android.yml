@@ -69,6 +69,12 @@ jobs:
 
           # AGP jniLibs must contain only shared objects, not the cgo header.
           rm -f "$OUT_DIR/libtxlitecore.h"
+          STRIP_BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          NM_BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          if [ -x "$STRIP_BIN" ]; then
+            "$STRIP_BIN" --strip-unneeded "$OUT_DIR/libtxlitecore.so"
+          fi
+          "$NM_BIN" -D "$OUT_DIR/libtxlitecore.so" | grep -q 'Java_com_txlite_android_core_CoreBridge_nativeCall'
           ls -lh "$OUT_DIR/libtxlitecore.so"
 
       - name: Download and verify official hev-socks5-tunnel.aar (v2.20.0)

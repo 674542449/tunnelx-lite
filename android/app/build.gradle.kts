@@ -18,6 +18,8 @@ android {
         ndk {
             abiFilters += "arm64-v8a"
         }
+
+        resourceConfigurations += listOf("zh-rCN", "zh", "en")
     }
 
     signingConfigs {
@@ -34,8 +36,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
-            isShrinkResources = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             val rel = signingConfigs.getByName("release")
             signingConfig = if (rel.storeFile != null) rel else signingConfigs.getByName("debug")
             proguardFiles(
@@ -64,10 +66,13 @@ android {
 
     packaging {
         jniLibs {
-            useLegacyPackaging = false
+            // Compress native .so inside APK for compact mobile downloads.
+            useLegacyPackaging = true
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "DebugProbesKt.bin"
+            excludes += "kotlin-tooling-metadata.json"
         }
     }
 }
@@ -86,7 +91,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.compose.material:material-icons-core")
 
     // Offline QR scanner (zero Google Play Services dependency; works on all Chinese ROMs)
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")

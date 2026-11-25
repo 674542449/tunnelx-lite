@@ -16,10 +16,9 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Apps
-import androidx.compose.material.icons.rounded.Public
-import androidx.compose.material.icons.rounded.Router
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.ui.res.painterResource
+import com.txlite.android.R
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -258,19 +257,19 @@ private fun TxliteRootApp(
                 NavigationBarItem(
                     selected = activeTab == 0,
                     onClick = { activeTab = 0 },
-                    icon = { Icon(Icons.Rounded.Router, contentDescription = "节点") },
+                    icon = { Icon(painterResource(R.drawable.ic_tab_nodes), contentDescription = "节点") },
                     label = { Text("节点") },
                 )
                 NavigationBarItem(
                     selected = activeTab == 1,
                     onClick = { activeTab = 1 },
-                    icon = { Icon(Icons.Rounded.Public, contentDescription = "分流检测") },
+                    icon = { Icon(painterResource(R.drawable.ic_tab_check), contentDescription = "分流检测") },
                     label = { Text("分流检测") },
                 )
                 NavigationBarItem(
                     selected = activeTab == 2,
                     onClick = { activeTab = 2 },
-                    icon = { Icon(Icons.Rounded.Apps, contentDescription = "分应用") },
+                    icon = { Icon(painterResource(R.drawable.ic_tab_apps), contentDescription = "分应用") },
                     label = { Text("分应用") },
                 )
                 NavigationBarItem(

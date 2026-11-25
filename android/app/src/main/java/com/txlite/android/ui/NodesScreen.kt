@@ -21,11 +21,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.PowerSettingsNew
-import androidx.compose.material.icons.rounded.QrCodeScanner
-import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.ui.res.painterResource
+import com.txlite.android.R
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -270,7 +268,7 @@ fun NodesScreen(
                             containerColor = if (isConnected || isConnecting) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                         ),
                     ) {
-                        Icon(Icons.Rounded.PowerSettingsNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(painterResource(R.drawable.ic_power), contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = when {
@@ -296,7 +294,7 @@ fun NodesScreen(
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                 ) {
-                    Icon(Icons.Rounded.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(painterResource(R.drawable.ic_qr_scan), contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("扫码", maxLines = 1)
                 }
@@ -305,7 +303,7 @@ fun NodesScreen(
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                 ) {
-                    Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(painterResource(R.drawable.ic_paste), contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("剪贴板", maxLines = 1)
                 }
@@ -324,7 +322,7 @@ fun NodesScreen(
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                 ) {
-                    Icon(Icons.Rounded.Speed, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(painterResource(R.drawable.ic_speed), contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("测速", maxLines = 1)
                 }
