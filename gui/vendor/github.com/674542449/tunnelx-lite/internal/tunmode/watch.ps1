@@ -1,6 +1,7 @@
 ﻿param($inputReader)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
 if (-not $inputReader) { $inputReader = [IO.StreamReader]::new([Console]::OpenStandardInput()) }
 $cfg = $inputReader.ReadLine() | ConvertFrom-Json
 $child = $null
@@ -42,15 +43,22 @@ function Get-UplinkInfo {
     }
     return @{ if_v4 = $ifV4; if_v6 = $ifV6; dns = @($dns) }
 }
-function Save-State {
+function Save-State($obj) {
     $tmp = $cfg.State + '.new'
     [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($cfg.State)) | Out-Null
-    [IO.File]::WriteAllText($tmp, ($script:saved | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    $json = ($obj | ConvertTo-Json -Depth 8)
+    if ([string]::IsNullOrWhiteSpace($json)) { throw 'TUN 状态序列化失败' }
+    [IO.File]::WriteAllText($tmp, $json, [Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $tmp -Destination $cfg.State -Force
 }
 function Restore-State {
     if (-not (Test-Path -LiteralPath $cfg.State)) { return }
-    $old = Get-Content -LiteralPath $cfg.State -Raw | ConvertFrom-Json
+    $raw = Get-Content -LiteralPath $cfg.State -Raw
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        Remove-Item -LiteralPath $cfg.State -Force
+        return
+    }
+    $old = $raw | ConvertFrom-Json
     if ($old.Alias -notmatch '^tunnelX-[a-f0-9]{12}$' -or $old.GUID -notmatch '^\{[a-fA-F0-9-]{36}\}$') { throw 'TUN 恢复记录无效' }
     # Remove only our marked DNS policy first so DNS recovers immediately. Never clear another VPN's NRPT table.
     $dnsRules = @(Get-DnsClientNrptRule -ErrorAction Stop | Where-Object { $_.Comment -eq $old.Alias -and $_.DisplayName -eq $old.Alias })
@@ -96,17 +104,17 @@ try {
             $exits += @{Prefix=$prefix;Index=$route.InterfaceIndex;NextHop=$route.NextHop;Metric=4276}
         }
     }
-    Save-State
+    Save-State $saved
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = Join-Path $cfg.Runtime 'tun2socks.exe'
     $start.WorkingDirectory = $cfg.Runtime
-    $start.Arguments = '--device tun://' + $alias + '?guid=' + $guid + ' --proxy socks5://' + $cfg.SOCKS + ' --mtu 1500 --tcp-sndbuf 8m --tcp-rcvbuf 8m --tcp-auto-tuning --loglevel error'
+    $start.Arguments = '--device tun://' + $alias + '?guid=' + $guid + ' --proxy socks5://' + $cfg.SOCKS + ' --mtu 1500 --tcp-sndbuf 4m --tcp-rcvbuf 4m --tcp-auto-tuning --loglevel error'
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
     $child = [Diagnostics.Process]::Start($start)
     $saved.ChildPID = $child.Id
     $saved.ChildStart = $child.StartTime.ToUniversalTime().Ticks.ToString()
-    Save-State
+    Save-State $saved
     $adapter = $null
     for ($i=0; $i -lt 70; $i++) {
         if ($child.HasExited) { throw 'TUN 网络栈未能启动，请检查组件或管理员权限' }
@@ -144,7 +152,7 @@ try {
     if (-not $preferred) { throw 'TUN 虚拟网卡地址未就绪' }
     foreach ($r in $exits) {
         $saved.Routes += $r
-        Save-State
+        Save-State $saved
         New-NetRoute -DestinationPrefix $r.Prefix -InterfaceIndex $r.Index -NextHop $r.NextHop -RouteMetric 4276 -PolicyStore ActiveStore | Out-Null
     }
     foreach ($prefix in @('0.0.0.0/1','128.0.0.0/1','::/1','8000::/1')) {

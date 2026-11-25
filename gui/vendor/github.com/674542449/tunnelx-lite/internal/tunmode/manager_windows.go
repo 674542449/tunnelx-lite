@@ -97,7 +97,7 @@ type settings struct {
 // and executes it with the same StreamReader so subsequent JSON config and EOF
 // signals share the stream cleanly without ever hitting Windows' 32 KiB
 // CreateProcess command-line length limit.
-const bootstrapScript = `$r=[IO.StreamReader]::new([Console]::OpenStandardInput());$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($r.ReadLine()));&([ScriptBlock]::Create($s)) $r`
+const bootstrapScript = `[Console]::OutputEncoding=[Text.Encoding]::UTF8;$r=[IO.StreamReader]::new([Console]::OpenStandardInput());$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($r.ReadLine()));. ([ScriptBlock]::Create($s)) $r`
 
 func encodedBootstrap() string {
 	u := utf16.Encode([]rune(bootstrapScript))
@@ -313,11 +313,14 @@ func Recover(state string) error {
 	c.Stdin = strings.NewReader(encodedScriptLine() + string(b) + "\n")
 	c.WaitDelay = 5 * time.Second
 	out, e := c.Output()
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "TUN_ERROR:") {
+			return errors.New(strings.TrimPrefix(line, "TUN_ERROR:"))
+		}
+	}
 	if e != nil {
 		return errors.New("TUN 网络恢复未完成，请以管理员权限重试")
-	}
-	if strings.Contains(string(out), "TUN_ERROR:") {
-		return errors.New("TUN 网络恢复未完成，请重试")
 	}
 	return nil
 }
