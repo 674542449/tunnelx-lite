@@ -157,10 +157,31 @@ func (e *Engine) Connect(id string, systemProxy bool) error {
 	e.mu.Lock()
 	e.stopRecoveryLocked()
 	e.mu.Unlock()
-	return e.connect(id, systemProxy, 0)
+	return e.connect(id, systemProxy, 0, false, nil)
 }
 
-func (e *Engine) connect(id string, systemProxy bool, recovery uint64) (result error) {
+// ConnectExternalTUN connects using an OS-managed TUN interface (such as
+// Android VpnService + hev-socks5-tunnel) where our app's own outbound sockets
+// already bypass the VPN via addDisallowedApplication.
+func (e *Engine) ConnectExternalTUN(id string, dnsServers []string) error {
+	e.mu.Lock()
+	e.stopRecoveryLocked()
+	e.mu.Unlock()
+	return e.connect(id, false, 0, true, dnsServers)
+}
+
+// UpdateExternalDNS refreshes the physical upstream DNS servers reported by an
+// external TUN manager (e.g. Android ConnectivityManager on Wi-Fi <-> 5G switch).
+func (e *Engine) UpdateExternalDNS(dnsServers []string) {
+	e.mu.Lock()
+	liveProxy := e.proxy
+	e.mu.Unlock()
+	if liveProxy != nil && liveProxy.ExternalTUN {
+		liveProxy.SetUplink(0, 0, dnsServers)
+	}
+}
+
+func (e *Engine) connect(id string, systemProxy bool, recovery uint64, externalTUN bool, externalDNS []string) (result error) {
 	if !e.lifecycle.TryLock() {
 		return errors.New("正在处理连接，请稍后重试")
 	}
@@ -232,6 +253,10 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64) (result e
 	if err := e.recoverProxy(); err != nil {
 		return err
 	}
+	if externalTUN {
+		tunEnabled = false
+		systemProxy = false
+	}
 	if tunEnabled {
 		if !tunmode.Elevated() {
 			return errors.New("TUN 模式需要管理员权限，请退出客户端后右键选择“以管理员身份运行”")
@@ -264,12 +289,16 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64) (result e
 	p = client.NewProxy(m)
 	p.EnableDNSCache()
 	p.SetDNSConfig(dnsCfg)
-	if tunEnabled {
+	if tunEnabled || externalTUN {
 		p.TUN = true
+		p.ExternalTUN = externalTUN
 		// Outbound landing is IPv4-only (inbound entry still supports IPv4/IPv6).
 		// Suppressing IPv6 egress on TUN immediately blocks AAAA/HTTPS IPv6 DNS
 		// and prevents dual-IP / IPv6 leak even against older servers.
 		p.TUNIPv6.Store(false)
+		if externalTUN {
+			p.SetUplink(0, 0, externalDNS)
+		}
 	}
 	router, err := buildRouter(mode, rules, exceptions, p, dnsCfg.Enabled)
 	if err != nil {

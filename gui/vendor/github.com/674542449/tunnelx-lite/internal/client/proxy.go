@@ -31,6 +31,7 @@ type Proxy struct {
 	Router          *routing.Router // Legacy direct field for tests; prefer SetRouter for runtime updates.
 	router          atomic.Pointer[routing.Router]
 	TUN             bool // Set before Start; DNS and address-family policy for captured IP traffic.
+	ExternalTUN     bool // Set before Start when OS-level VPN bypass (e.g. Android VpnService.addDisallowedApplication) protects our sockets directly.
 	TUNIPv6         atomic.Bool
 	ipv6Successes   atomic.Int32
 	dnsPreferred    atomic.Uint32

@@ -1,0 +1,2 @@
+-keep class com.txlite.android.core.CoreBridge { *; }
+-keep class hev.htproxy.TProxyService { *; }

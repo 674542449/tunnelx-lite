@@ -2,11 +2,11 @@
 
 package app
 
-import "errors"
-
-func protect([]byte) ([]byte, error) {
-	return nil, errors.New("server list encryption requires Windows")
+// On Android and Unix platforms the server list lives inside an app-private
+// 0600 file in a 0700 directory (hardware-encrypted by Android FBE on mobile).
+func protect(plain []byte) ([]byte, error) {
+	return append([]byte(nil), plain...), nil
 }
-func unprotect([]byte) ([]byte, error) {
-	return nil, errors.New("server list encryption requires Windows")
+func unprotect(blob []byte) ([]byte, error) {
+	return append([]byte(nil), blob...), nil
 }

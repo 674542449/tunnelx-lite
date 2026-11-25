@@ -2,3 +2,8 @@ dist/
 *.exe
 /state/
 gui/build/bin/
+android/.gradle/
+android/local.properties
+android/app/build/
+android/app/libs/*.aar
+android/app/src/main/jniLibs/

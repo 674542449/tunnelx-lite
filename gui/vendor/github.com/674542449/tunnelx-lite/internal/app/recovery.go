@@ -67,7 +67,7 @@ func (e *Engine) recoverTUN(expected *client.Mux) {
 			return
 		case <-timer.C:
 		}
-		if err = e.connect(id, false, epoch); err == nil {
+		if err = e.connect(id, false, epoch, false, nil); err == nil {
 			e.mu.Lock()
 			if e.recoveryEpoch == epoch && e.logger != nil {
 				e.logger.Record("network_recovery_succeeded", map[string]any{"scope": "client", "attempt": attempt})

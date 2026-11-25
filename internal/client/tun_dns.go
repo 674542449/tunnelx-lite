@@ -320,9 +320,10 @@ func (p *Proxy) exchangeDNSRemote(ctx context.Context, query []byte) []byte {
 
 func (p *Proxy) queryDirectDNS(ctx context.Context, h dnsmessage.Header, q dnsmessage.Question, query []byte, localOnly bool) []byte {
 	uplink := p.getUplink()
-	// When running in TUN mode without a known physical uplink interface, avoid
-	// direct dials that would loop back into the TUN adapter.
-	if p.TUN && uplink.ifV4 == 0 && uplink.ifV6 == 0 && p.directDNSQuery == nil {
+	// When running in TUN mode without a known physical uplink interface (unless
+	// OS-level process bypass such as Android VpnService.addDisallowedApplication
+	// is active), avoid direct dials that would loop back into the TUN adapter.
+	if p.TUN && !p.ExternalTUN && uplink.ifV4 == 0 && uplink.ifV6 == 0 && p.directDNSQuery == nil {
 		return nil
 	}
 	if localOnly {
@@ -350,7 +351,7 @@ func (p *Proxy) queryDirectDNS(ctx context.Context, h dnsmessage.Header, q dnsme
 
 func (p *Proxy) queryDomesticUpstreams(ctx context.Context, h dnsmessage.Header, q dnsmessage.Question, query []byte) []byte {
 	uplink := p.getUplink()
-	if p.TUN && uplink.ifV4 == 0 && uplink.ifV6 == 0 && p.directDNSQuery == nil {
+	if p.TUN && !p.ExternalTUN && uplink.ifV4 == 0 && uplink.ifV6 == 0 && p.directDNSQuery == nil {
 		return nil
 	}
 	for _, up := range p.domesticUpstreams() {
