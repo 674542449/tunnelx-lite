@@ -26,7 +26,7 @@ try {
       </div>
       <div class="brand-info">
         <strong class="brand-name">txlite</strong>
-        <span class="brand-ver" id="brand-version">v0.4.0</span>
+        <span class="brand-ver" id="brand-version">v0.5.0</span>
       </div>
     </div>
 
@@ -261,11 +261,11 @@ try {
             <label class="field">
               <span class="field-label">传输方式</span>
               <select id="set-transport">
-                <option value="tcp">TCP 直连多通道（推荐，极速无队头阻塞）</option>
+                <option value="tcp">TCP 直连 + Vision 零拷贝（推荐，参考 VLESS Reality）</option>
                 <option value="h2">TCP 多路复用（HTTP/2 6 路并发载波）</option>
               </select>
             </label>
-            <p class="field-note">直连模式为每条连接分配独立 TLS 1.3 TCP 通道并内置预热连接池，彻底消除 HTTP/2 队头阻塞与单连接拥塞瓶颈，下载大文件和看 4K 视频速度更快；若服务端为旧版会自动平滑回退到 HTTP/2。</p>
+            <p class="field-note">直连模式采用 XTLS Vision 思想：握手期随机填充消除 TLS 套 TLS 特征，内层 TLS 1.3 建连后自动剥离外层加密并启用服务端 Linux splice 零拷贝直通，彻底消除双重加解密与队头阻塞；连接旧版服务端时自动向下兼容。</p>
           </article>
 
           <article class="card">

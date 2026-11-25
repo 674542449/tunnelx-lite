@@ -3,9 +3,15 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"sync"
@@ -134,5 +140,139 @@ func TestDirectTCPFallsBackToH2OnLegacy505Server(t *testing.T) {
 	buf := make([]byte, 4)
 	if _, err = io.ReadFull(st, buf); err != nil || string(buf) != "ping" {
 		t.Fatalf("fallback data failed: %q %v", string(buf), err)
+	}
+}
+
+func testInnerCert(t *testing.T) tls.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "inner.example"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		DNSNames:     []string{"inner.example"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+type tunnelConn struct {
+	*Tunnel
+	local, remote net.Addr
+}
+
+func (c tunnelConn) LocalAddr() net.Addr                { return c.local }
+func (c tunnelConn) RemoteAddr() net.Addr               { return c.remote }
+func (c tunnelConn) SetReadDeadline(t time.Time) error  { return c.SetDeadline(t) }
+func (c tunnelConn) SetWriteDeadline(t time.Time) error { return c.SetDeadline(t) }
+
+// End-to-end test: real inner TLS 1.3 HTTPS stream proxied through txlite
+// outer TLS 1.3 + ECH server must negotiate Tunnelx-Vision, peel off outer TLS
+// after inner TLS 1.3 handshake, and deliver 4 MiB bit-for-bit over direct TCP.
+func TestVisionEndToEndInnerTLS13DirectSpliceAndServerFirst(t *testing.T) {
+	payload := make([]byte, 4<<20) // 4 MiB
+	_, _ = rand.Read(payload)
+	wantHash := sha256.Sum256(payload)
+
+	// 1. Inner TLS 1.3 target server.
+	innerCert := testInnerCert(t)
+	tlsLn, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{innerCert}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tlsLn.Close()
+	go func() {
+		for {
+			c, e := tlsLn.Accept()
+			if e != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				req := make([]byte, 4)
+				if _, e := io.ReadFull(conn, req); e != nil {
+					return
+				}
+				_, _ = conn.Write(payload)
+			}(c)
+		}
+	}()
+
+	// 2. Server-first plaintext target (sends banner immediately before client writes).
+	bannerLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bannerLn.Close()
+	go func() {
+		for {
+			c, e := bannerLn.Accept()
+			if e != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				_, _ = conn.Write([]byte("SSH-2.0-TestBanner\r\n"))
+			}(c)
+		}
+	}()
+
+	link := tcpTestServer(t, tlsLn.Addr().String(), bannerLn.Addr().String())
+	m := tcpTestMux(t, link, "tcp")
+
+	// Simulate verifyGateway's 127.0.0.1:9 probe which detects Tunnelx-Vision: 1.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, _ = m.OpenTCP(ctx, "127.0.0.1:9")
+	if m.ActiveTransport() != "vision" {
+		t.Fatalf("expected ActiveTransport=vision after gateway probe, got %s", m.ActiveTransport())
+	}
+
+	// Test 1: Inner TLS 1.3 download through Vision fast-open coalesced write -> Direct Splice!
+	tun, err := m.OpenTCPFast(ctx, tlsLn.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tun.Close()
+	if tun.Transport() != "vision" {
+		t.Fatalf("expected vision transport, got %s", tun.Transport())
+	}
+	innerCli := tls.Client(tunnelConn{Tunnel: tun, local: &net.TCPAddr{}, remote: tlsLn.Addr()}, &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true})
+	if err := innerCli.HandshakeContext(ctx); err != nil {
+		t.Fatalf("inner TLS 1.3 handshake over Vision failed: %v", err)
+	}
+	if _, err := innerCli.Write([]byte("GET!")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(innerCli)
+	if err != nil {
+		t.Fatalf("inner TLS 1.3 read over Vision failed: %v", err)
+	}
+	if sha256.Sum256(got) != wantHash {
+		t.Fatalf("Vision direct payload corrupted: got %d bytes", len(got))
+	}
+	if !tun.VisionDirect() {
+		t.Fatal("inner TLS 1.3 flow did not switch both directions to Vision direct zero-copy mode")
+	}
+
+	// Test 2: Server-first non-TLS target must NOT stall on prefix coalescing and stays in outer TLS.
+	bTun, err := m.OpenTCPFast(ctx, bannerLn.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bTun.Close()
+	banner, err := io.ReadAll(bTun)
+	if err != nil || string(banner) != "SSH-2.0-TestBanner\r\n" {
+		t.Fatalf("server-first banner over Vision failed: %q %v", string(banner), err)
+	}
+	if bTun.VisionDirect() {
+		t.Fatal("plaintext server-first flow must not switch to direct raw TCP")
 	}
 }

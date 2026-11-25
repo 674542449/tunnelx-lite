@@ -91,8 +91,12 @@ func TestTCPTransportPreferencesAndLegacyMigration(t *testing.T) {
 		if err = e.SaveTransport("h2"); err == nil {
 			t.Fatal("transport changed while connected")
 		}
-		if got := e.Status()["transport"]; got != transport {
-			t.Fatalf("expected active transport %q, got %v", transport, got)
+		wantTransport := transport
+		if transport == "tcp" {
+			wantTransport = "vision"
+		}
+		if got := e.Status()["transport"]; got != wantTransport {
+			t.Fatalf("expected active transport %q, got %v", wantTransport, got)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		tun, err := e.mux.OpenTCPFast(ctx, ln.Addr().String())
@@ -107,7 +111,7 @@ func TestTCPTransportPreferencesAndLegacyMigration(t *testing.T) {
 		b, _ := io.ReadAll(res.Body)
 		tun.Close()
 		cancel()
-		if string(b) != "hello over fast tcp" || tun.Transport() != transport {
+		if string(b) != "hello over fast tcp" || tun.Transport() != wantTransport {
 			t.Fatalf("%s response or transport mismatch: %q %q", transport, string(b), tun.Transport())
 		}
 		e.Close()

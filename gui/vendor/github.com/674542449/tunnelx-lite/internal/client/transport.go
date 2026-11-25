@@ -22,16 +22,17 @@ import (
 )
 
 type Stats struct {
-	Active     atomic.Int64
-	Uploaded   atomic.Int64
-	Downloaded atomic.Int64
-	UDPDropped atomic.Int64
-	TCPStreams atomic.Int64
-	TCPDials   atomic.Int64
-	H2Streams  atomic.Int64
-	H2Dials    atomic.Int64
-	H2Retired  atomic.Int64
-	H2Retries  atomic.Int64
+	Active        atomic.Int64
+	Uploaded      atomic.Int64
+	Downloaded    atomic.Int64
+	UDPDropped    atomic.Int64
+	TCPStreams    atomic.Int64
+	TCPDials      atomic.Int64
+	VisionStreams atomic.Int64
+	H2Streams     atomic.Int64
+	H2Dials       atomic.Int64
+	H2Retired     atomic.Int64
+	H2Retries     atomic.Int64
 }
 type Mux struct {
 	Config            config.Client
@@ -52,6 +53,7 @@ type Mux struct {
 	growing           bool // a background carrier dial is in progress; guarded by h2Mu
 	direct            directPoolState
 	directUnsupported atomic.Bool
+	visionSupported   atomic.Bool
 	bindAddr          net.Addr // tests only: source address for carrier dials
 	uplinkIfV4        uint32
 	uplinkIfV6        uint32
@@ -311,11 +313,12 @@ func transportFailure(ctx context.Context, e error, connectionClosed bool) bool 
 type Tunnel struct {
 	io.Reader
 	io.Writer
-	closeWrite  func() error
-	close       func() error
-	setDeadline func(time.Time) error
-	transport   string
-	carrierID   string
+	closeWrite   func() error
+	close        func() error
+	setDeadline  func(time.Time) error
+	visionDirect func() bool
+	transport    string
+	carrierID    string
 }
 
 func (t *Tunnel) CloseWrite() error { return t.closeWrite() }
@@ -327,6 +330,10 @@ func (t *Tunnel) SetDeadline(v time.Time) error {
 	return nil
 }
 func (t *Tunnel) Transport() string { return t.transport }
+
+// VisionDirect reports whether both read and write directions of this tunnel
+// have peeled off outer TLS and switched to raw TCP direct splice.
+func (t *Tunnel) VisionDirect() bool { return t.visionDirect != nil && t.visionDirect() }
 
 type RequestError struct {
 	Status int

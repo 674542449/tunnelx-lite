@@ -337,7 +337,7 @@ button, input, select, textarea { font: inherit; color: var(--text); }
   letter-spacing: 0.03em;
   flex-shrink: 0;
 }
-.transport-chip.tcp { color: var(--good); border-color: var(--good-soft); background: var(--good-soft); }
+.transport-chip.vision, .transport-chip.tcp { color: var(--good); border-color: var(--good-soft); background: var(--good-soft); }
 .transport-chip.h2 { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
 
 .active-node-name {

@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"github.com/674542449/tunnelx-lite/internal/config"
@@ -96,6 +97,16 @@ func (s *Server) Serve(ctx context.Context) error {
 	if e = http2.ConfigureServer(s.HTTP, &http2.Server{MaxConcurrentStreams: 512, MaxReadFrameSize: 256 << 10, MaxUploadBufferPerConnection: 32 << 20, MaxUploadBufferPerStream: 8 << 20, IdleTimeout: 120 * time.Second}); e != nil {
 		return e
 	}
+	// Disable exact-record mode immediately on HTTP/2 connections so only
+	// Vision HTTP/1.1 handshakes pay record-boundary reads.
+	if h2Fn := s.HTTP.TLSNextProto["h2"]; h2Fn != nil {
+		s.HTTP.TLSNextProto["h2"] = func(hs *http.Server, c *tls.Conn, h http.Handler) {
+			if ec, ok := c.NetConn().(*wire.ExactRecordConn); ok {
+				ec.DisableExact()
+			}
+			h2Fn(hs, c, h)
+		}
+	}
 	errs := make(chan error, 1)
 	network := s.Config.Network
 	if network == "" {
@@ -128,7 +139,7 @@ func (l tcpTuneListener) Accept() (net.Conn, error) {
 		_ = tcp.SetKeepAlive(true)
 		_ = tcp.SetKeepAlivePeriod(30 * time.Second)
 	}
-	return c, nil
+	return wire.NewExactRecordConn(c), nil
 }
 func (s *Server) public(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -172,6 +183,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Tunnelx-Version", config.Version)
+	w.Header().Set("Tunnelx-Vision", "1")
 	if r.Header.Get("Tunnelx-Version") != config.Version {
 		http.Error(w, "Bad Request", 400)
 		return
@@ -315,6 +327,8 @@ var h2EOFGrace = 2 * time.Second
 // serveDirectTCP hijacks an HTTP/1.1 CONNECT over TLS 1.3 into a raw bidirectional
 // stream: one dedicated TCP socket + kernel BBR congestion window per flow, with
 // zero HTTP/2 framing, flow-control window, or head-of-line blocking overhead.
+// When the client negotiates Tunnelx-Vision: 1, inner TLS 1.3 flows peel off
+// outer TLS after handshake and switch to Linux splice(2) zero-copy forwarding.
 func (s *Server) serveDirectTCP(w http.ResponseWriter, r *http.Request, target string, conn net.Conn) {
 	hj, ok := w.(http.Hijacker)
 	if !ok {
@@ -325,14 +339,36 @@ func (s *Server) serveDirectTCP(w http.ResponseWriter, r *http.Request, target s
 	if e != nil {
 		return
 	}
-	defer clientConn.Close()
+	var ec *wire.ExactRecordConn
+	if tc, ok := clientConn.(*tls.Conn); ok {
+		ec, _ = tc.NetConn().(*wire.ExactRecordConn)
+	}
+	useVision := r.Header.Get("Tunnelx-Vision") == "1" && ec != nil
+	if !useVision && ec != nil {
+		ec.DisableExact()
+	}
+	closeClient := func() {
+		if useVision && ec != nil {
+			// Close the raw TCP socket directly so we never write an outer TLS
+			// close_notify alert into an active Vision direct stream.
+			_ = ec.Raw().Close()
+			return
+		}
+		_ = clientConn.Close()
+	}
+	defer closeClient()
 	_ = clientConn.SetDeadline(time.Time{})
-	if _, e = io.WriteString(clientConn, "HTTP/1.1 200 Connection Established\r\nTunnelx-Version: "+config.Version+"\r\n\r\n"); e != nil {
+
+	resp := "HTTP/1.1 200 Connection Established\r\nTunnelx-Version: " + config.Version + "\r\n\r\n"
+	if useVision {
+		resp = "HTTP/1.1 200 Connection Established\r\nTunnelx-Version: " + config.Version + "\r\nTunnelx-Vision: 1\r\n\r\n"
+	}
+	if _, e = io.WriteString(clientConn, resp); e != nil {
 		return
 	}
-	stopReq := context.AfterFunc(r.Context(), func() { conn.Close(); clientConn.Close() })
+	stopReq := context.AfterFunc(r.Context(), func() { conn.Close(); closeClient() })
 	defer stopReq()
-	stopSrv := context.AfterFunc(s.serverContext(), func() { conn.Close(); clientConn.Close() })
+	stopSrv := context.AfterFunc(s.serverContext(), func() { conn.Close(); closeClient() })
 	defer stopSrv()
 
 	idle := time.Duration(s.Config.IdleTimeout) * time.Second
@@ -344,6 +380,11 @@ func (s *Server) serveDirectTCP(w http.ResponseWriter, r *http.Request, target s
 			early := append([]byte(nil), peeked...)
 			clientReader = io.MultiReader(bytes.NewReader(early), icClient)
 		}
+	}
+
+	if useVision {
+		s.relayVisionTCP(r, target, conn, icUp, clientConn, icClient, clientReader, ec, idle)
+		return
 	}
 
 	upLimit, downLimit := s.limiters(r.Context())
@@ -390,7 +431,7 @@ func (s *Server) serveDirectTCP(w http.ResponseWriter, r *http.Request, target s
 		}
 	} else {
 		conn.Close()
-		clientConn.Close()
+		closeClient()
 	}
 	select {
 	case <-up:
@@ -399,6 +440,144 @@ func (s *Server) serveDirectTCP(w http.ResponseWriter, r *http.Request, target s
 	}
 	if s.accessLog != nil {
 		s.accessLog.Info("proxy", "target", target, "proto", "tcp/direct", "upload", upBytes.Load(), "download", downBytes.Load(), "duration_ms", time.Since(proxyStart).Milliseconds())
+	}
+}
+
+func (s *Server) relayVisionTCP(r *http.Request, target string, upstream net.Conn, icUp *idleConn, clientConn net.Conn, icClient *idleConn, clientReader io.Reader, ec *wire.ExactRecordConn, idle time.Duration) {
+	vs := wire.NewVisionState()
+	vr := wire.NewVisionReader(clientReader, ec, vs, false)
+	vw := wire.NewVisionWriter(icClient, ec.Raw(), vs, false, nil)
+	rawClient := ec.Raw()
+	upLimit, downLimit := s.limiters(r.Context())
+	p := permit(r.Context())
+	var upBytes, downBytes atomic.Int64
+	proxyStart := time.Now()
+
+	up := make(chan error, 1)
+	go func() {
+		buf := getRelayBuf()
+		defer putRelayBuf(buf)
+		var upErr error
+		for !vr.IsDirect() && !vr.IsOuterTLS() {
+			n, re := vr.Read(*buf)
+			if n > 0 {
+				chunk := (*buf)[:n]
+				if p != nil {
+					if !p.Allowed() || charge(p, true, n) != n {
+						upErr = context.Canceled
+						break
+					}
+				}
+				if upLimit != nil {
+					if we := upLimit.Wait(r.Context(), n); we != nil {
+						upErr = we
+						break
+					}
+				}
+				upBytes.Add(int64(n))
+				s.Uploaded.Add(int64(n))
+				if _, we := icUp.Write(chunk); we != nil {
+					upErr = we
+					break
+				}
+			}
+			if re != nil {
+				if re != io.EOF {
+					upErr = re
+				}
+				break
+			}
+		}
+		if upErr == nil && vr.IsDirect() {
+			upErr = copyDirectTCP(upstream, rawClient, idle, &upBytes, &s.Uploaded, upLimit, p, true, r.Context())
+		} else if upErr == nil && vr.IsOuterTLS() {
+			var reader io.Reader = vr
+			if upLimit != nil {
+				reader = throttledReader{r: reader, l: upLimit, ctx: r.Context()}
+			}
+			if p != nil {
+				reader = accountReader{reader: reader, access: p, upload: true}
+			}
+			reader = countReader{r: reader, n: &upBytes, total: &s.Uploaded}
+			_, upErr = io.CopyBuffer(icUp, reader, *buf)
+		}
+		if upErr == nil {
+			if tcp, ok := upstream.(*net.TCPConn); ok {
+				_ = tcp.CloseWrite()
+			}
+		} else {
+			upstream.Close()
+		}
+		up <- upErr
+	}()
+
+	downBuf := getRelayBuf()
+	var downErr error
+	for !vw.IsDirect() && !vw.IsOuterTLS() {
+		n, re := icUp.Read(*downBuf)
+		if n > 0 {
+			chunk := (*downBuf)[:n]
+			if p != nil {
+				if !p.Allowed() || charge(p, false, n) != n {
+					downErr = context.Canceled
+					break
+				}
+			}
+			if downLimit != nil {
+				if we := downLimit.Wait(r.Context(), n); we != nil {
+					downErr = we
+					break
+				}
+			}
+			downBytes.Add(int64(n))
+			s.Downloaded.Add(int64(n))
+			if _, we := vw.Write(chunk); we != nil {
+				downErr = we
+				break
+			}
+		}
+		if re != nil {
+			if re != io.EOF {
+				downErr = re
+			}
+			break
+		}
+	}
+	if downErr == nil && vw.IsDirect() {
+		putRelayBuf(downBuf)
+		downBuf = nil
+		downErr = copyDirectTCP(rawClient, upstream, idle, &downBytes, &s.Downloaded, downLimit, p, false, r.Context())
+	} else if downErr == nil && vw.IsOuterTLS() {
+		var reader io.Reader = icUp
+		if downLimit != nil {
+			reader = throttledReader{r: reader, l: downLimit, ctx: r.Context()}
+		}
+		if p != nil {
+			reader = accountReader{reader: reader, access: p}
+		}
+		reader = countReader{r: reader, n: &downBytes, total: &s.Downloaded}
+		_, downErr = io.CopyBuffer(icClient, reader, *downBuf)
+	}
+	if downBuf != nil {
+		putRelayBuf(downBuf)
+	}
+	if downErr == nil {
+		_ = vw.CloseWrite()
+	} else {
+		upstream.Close()
+		_ = rawClient.Close()
+	}
+	select {
+	case <-up:
+	case <-r.Context().Done():
+	case <-time.After(h2EOFGrace):
+	}
+	if s.accessLog != nil {
+		proto := "tcp/vision"
+		if vw.IsDirect() {
+			proto = "tcp/vision-direct"
+		}
+		s.accessLog.Info("proxy", "target", target, "proto", proto, "upload", upBytes.Load(), "download", downBytes.Load(), "duration_ms", time.Since(proxyStart).Milliseconds())
 	}
 }
 
@@ -526,6 +705,13 @@ func (c *idleConn) Write(b []byte) (int, error) {
 		c.Conn.SetWriteDeadline(now.Add(c.idle))
 	}
 	return c.Conn.Write(b)
+}
+func (c *idleConn) CloseWrite() error {
+	type closeWriter interface{ CloseWrite() error }
+	if cw, ok := c.Conn.(closeWriter); ok {
+		return cw.CloseWrite()
+	}
+	return nil
 }
 
 type pairRW struct {

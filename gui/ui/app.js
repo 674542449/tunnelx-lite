@@ -34,7 +34,7 @@ const stages = {
 };
 
 const modeNames = { bypass_cn: '绕过大陆', global: '全局代理' };
-const transportNames = { tcp: 'TCP 直连（极速）', h2: 'TCP 多路复用 (H2)' };
+const transportNames = { tcp: 'TCP 直连 + Vision 零拷贝', h2: 'TCP 多路复用 (H2)' };
 
 function el(tag, text, cls) {
   const e = document.createElement(tag);
@@ -233,7 +233,7 @@ function render() {
   const mode = pref.proxy_mode === 'global' ? 'global' : 'bypass_cn';
   const tun = status.tun || {};
 
-  $('brand-version').textContent = status.version || 'v0.4.0';
+  $('brand-version').textContent = status.version || 'v0.5.0';
   $('nav-node-count').textContent = String(servers.length);
   $('header-node-count').textContent = servers.length + ' 个节点';
 
@@ -261,12 +261,14 @@ function render() {
   const tpref = status.transport_preference === 'h2' ? 'h2' : 'tcp';
   const chip = $('transport-chip');
   if (on) {
-    const actual = status.transport === 'h2' ? 'h2' : 'tcp';
-    chip.textContent = actual === 'tcp' ? 'TCP' : 'H2';
+    const actual = status.transport === 'vision' ? 'vision' : status.transport === 'h2' ? 'h2' : 'tcp';
+    chip.textContent = actual === 'vision' ? 'VISION' : actual === 'tcp' ? 'TCP' : 'H2';
     chip.className = 'transport-chip ' + actual;
-    chip.title = actual === 'tcp'
-      ? '当前使用高速 TCP 直连多通道（TLS 1.3）'
-      : (tpref === 'tcp' ? '服务端为旧版，当前自动兼容 HTTP/2（更新服务端可启用极速直连）' : '当前使用 TCP HTTP/2 多路复用');
+    chip.title = actual === 'vision'
+      ? '当前使用 TCP 直连 + Vision 零拷贝直通（TLS 1.3 内层直连，无双重加密）'
+      : actual === 'tcp'
+      ? '当前使用 TCP 直连多通道（更新服务端至 v0.5.0 可启用 Vision 零拷贝）'
+      : (tpref === 'tcp' ? '服务端为旧版，当前自动兼容 HTTP/2（更新服务端可启用 Vision 极速直连）' : '当前使用 TCP HTTP/2 多路复用');
   } else {
     chip.textContent = tpref === 'h2' ? 'H2' : 'TCP';
     chip.className = 'transport-chip';
