@@ -53,6 +53,7 @@ func (e *Engine) SaveProxyMode(mode, exceptions string) error {
 		e.mu.Unlock()
 		return errors.New("请先断开连接，再开启 TUN 模式")
 	}
+	prevMode, prevDomains := e.preferences.ProxyMode, joinLines(e.preferences.DirectDomains)
 	p := e.preferences
 	if mode == routing.TUN {
 		p.TUNEnabled = true
@@ -60,9 +61,11 @@ func (e *Engine) SaveProxyMode(mode, exceptions string) error {
 		p.ProxyMode = mode
 	}
 	p.DirectDomains = normalized
+	nextDomains := joinLines(normalized)
+	routingChanged := prevMode != p.ProxyMode || prevDomains != nextDomains
 	var liveRouter *routing.Router
 	if e.proxy != nil {
-		liveRouter, err = buildRouter(p.ProxyMode, e.rules, joinLines(normalized), e.proxy, p.dnsConfig().Enabled)
+		liveRouter, err = buildRouter(p.ProxyMode, e.rules, nextDomains, e.proxy, p.dnsConfig().Enabled)
 		if err != nil {
 			e.mu.Unlock()
 			return err
@@ -78,6 +81,9 @@ func (e *Engine) SaveProxyMode(mode, exceptions string) error {
 	e.mu.Unlock()
 	if liveProxy != nil && liveRouter != nil {
 		liveProxy.SetRouter(liveRouter)
+		if routingChanged {
+			liveProxy.ResetConnections()
+		}
 		if liveProxy.TUN {
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

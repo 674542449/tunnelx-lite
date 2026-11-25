@@ -4,6 +4,7 @@ package tunmode
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -75,5 +76,49 @@ func TestPowerShellWatchSelfHealsEmptyAndRestoresValidState(t *testing.T) {
 	}
 	if _, err := os.Stat(validState); !os.IsNotExist(err) {
 		t.Fatalf("valid state file was not removed")
+	}
+}
+
+// Verifies watch.ps1's virtual-adapter filter classifies common VPN/TUN NICs as
+// virtual while keeping hardware Ethernet/Wi-Fi adapters preferred as uplink.
+func TestWatchScriptVirtualAdapterFilterAndUplink(t *testing.T) {
+	start := strings.Index(script, "function Test-IsVirtualAdapter")
+	end := strings.Index(script, "function Save-State")
+	if start < 0 || end <= start {
+		t.Fatal("could not locate Test-IsVirtualAdapter/Get-UplinkInfo in watch.ps1")
+	}
+	helper := script[start:end] + `
+$cases = @(
+    @{ Name='singbox_tun'; InterfaceDescription='sing-tun Tunnel'; HardwareInterface=$false; Want=$true },
+    @{ Name='Clash'; InterfaceDescription='Wintun Userspace Tunnel'; HardwareInterface=$false; Want=$true },
+    @{ Name='tunnelX-abcdef012345'; InterfaceDescription='Wintun'; HardwareInterface=$false; Want=$true },
+    @{ Name='以太网'; InterfaceDescription='Red Hat VirtIO Ethernet Adapter'; HardwareInterface=$true; Want=$false },
+    @{ Name='WLAN'; InterfaceDescription='Intel(R) Wi-Fi 6 AX201'; HardwareInterface=$true; Want=$false }
+)
+foreach ($c in $cases) {
+    $nic = [PSCustomObject]@{ Name=$c.Name; InterfaceDescription=$c.InterfaceDescription; HardwareInterface=$c.HardwareInterface }
+    $got = Test-IsVirtualAdapter $nic
+    if ($got -ne $c.Want) { throw ("mismatch for " + $c.Name + ": got " + $got) }
+}
+$u = Get-UplinkInfo
+if ($u.if_v4 -gt 0) {
+    $picked = Get-NetAdapter -InterfaceIndex $u.if_v4 -ErrorAction SilentlyContinue
+    $hasPhys = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | ForEach-Object {
+        Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue
+    } | Where-Object { $_ -and -not (Test-IsVirtualAdapter $_) }).Count -gt 0
+    if ($hasPhys -and (Test-IsVirtualAdapter $picked)) {
+        throw ("Get-UplinkInfo picked virtual adapter " + $picked.Name + " instead of physical NIC")
+    }
+}
+[Console]::Out.WriteLine('UPLINK_FILTER_OK')
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	c := commandContext(ctx)
+	encoded := strings.TrimPrefix(helper, "\xef\xbb\xbf")
+	c.Stdin = strings.NewReader(base64.StdEncoding.EncodeToString([]byte(encoded)) + "\n")
+	out, err := c.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "UPLINK_FILTER_OK") {
+		t.Fatalf("uplink filter check failed: %v\noutput: %s", err, string(out))
 	}
 }

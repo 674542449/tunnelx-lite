@@ -88,12 +88,15 @@ func dnsAnswer(h dnsmessage.Header, q dnsmessage.Question, code dnsmessage.RCode
 	return packet
 }
 
-// FlushDNSCache drops cached TUN DNS answers (e.g. after switching routing mode
-// or direct-domain exceptions).
+// FlushDNSCache drops cached TUN DNS answers and reverse-DNS IP->domain
+// mappings (e.g. after switching routing mode or direct-domain exceptions).
 func (p *Proxy) FlushDNSCache() {
 	p.dnsCacheMu.Lock()
 	clear(p.dnsCache)
 	p.dnsCacheMu.Unlock()
+	p.revDNSMu.Lock()
+	clear(p.revDNS)
+	p.revDNSMu.Unlock()
 }
 
 func (p *Proxy) lookupDNSCache(h dnsmessage.Header, q dnsmessage.Question) []byte {

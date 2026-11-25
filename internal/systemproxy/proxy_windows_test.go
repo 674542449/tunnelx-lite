@@ -98,3 +98,75 @@ func TestExternalTakeoverNeverBlocks(t *testing.T) {
 		t.Fatal("a corrupt snapshot must not block connecting", e)
 	}
 }
+
+func TestDisableForTUNSuspendsAndRestoresProxy(t *testing.T) {
+	path := fmt.Sprintf(`Software\txlite-tests\tun-%d`, time.Now().UnixNano())
+	k, _, e := registry.CreateKey(registry.CURRENT_USER, path, registry.ALL_ACCESS)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer registry.DeleteKey(registry.CURRENT_USER, path)
+	defer k.Close()
+
+	state := filepath.Join(t.TempDir(), "proxy.json")
+	m := &Manager{Path: state, Proxy: "127.0.0.1:8088", KeyPath: path}
+
+	// 1. When system proxy is already off, DisableForTUN is a clean no-op.
+	k.SetDWordValue("ProxyEnable", 0)
+	if e = m.DisableForTUN(); e != nil {
+		t.Fatal(e)
+	}
+	if _, statErr := os.Stat(state); !os.IsNotExist(statErr) {
+		t.Fatal("DisableForTUN should not write a snapshot when proxy is already off")
+	}
+
+	// 2. When an existing proxy + PAC are enabled, DisableForTUN suspends both.
+	k.SetDWordValue("ProxyEnable", 1)
+	k.SetStringValue("ProxyServer", "127.0.0.1:10808")
+	k.SetStringValue("AutoConfigURL", "http://127.0.0.1:9999/proxy.pac")
+	if got := m.ActiveExternalProxy(); got != "127.0.0.1:10808" {
+		t.Fatalf("ActiveExternalProxy got %q, want 127.0.0.1:10808", got)
+	}
+	if e = m.DisableForTUN(); e != nil {
+		t.Fatal(e)
+	}
+	if enabled, _, _ := k.GetIntegerValue("ProxyEnable"); enabled != 0 {
+		t.Fatalf("ProxyEnable still %d after DisableForTUN", enabled)
+	}
+	if _, _, pacErr := k.GetStringValue("AutoConfigURL"); pacErr != registry.ErrNotExist {
+		t.Fatalf("AutoConfigURL still present after DisableForTUN: %v", pacErr)
+	}
+	if m.Enabled() || m.Taken() || m.ActiveExternalProxy() != "" {
+		t.Fatalf("unexpected state during TUN suspension: enabled=%v taken=%v active=%q", m.Enabled(), m.Taken(), m.ActiveExternalProxy())
+	}
+
+	// 3. Restoring puts back exact original proxy + PAC.
+	if e = m.Restore(); e != nil {
+		t.Fatal(e)
+	}
+	if enabled, _, _ := k.GetIntegerValue("ProxyEnable"); enabled != 1 {
+		t.Fatalf("ProxyEnable not restored: %d", enabled)
+	}
+	if srv, _, _ := k.GetStringValue("ProxyServer"); srv != "127.0.0.1:10808" {
+		t.Fatalf("ProxyServer not restored: %q", srv)
+	}
+	if pac, _, _ := k.GetStringValue("AutoConfigURL"); pac != "http://127.0.0.1:9999/proxy.pac" {
+		t.Fatalf("AutoConfigURL not restored: %q", pac)
+	}
+
+	// 4. If another tool turns on a new proxy during TUN, Taken() reports it and Restore preserves it.
+	if e = m.DisableForTUN(); e != nil {
+		t.Fatal(e)
+	}
+	k.SetDWordValue("ProxyEnable", 1)
+	k.SetStringValue("ProxyServer", "127.0.0.1:7890")
+	if !m.Taken() || m.ActiveExternalProxy() != "127.0.0.1:7890" {
+		t.Fatalf("expected conflict detection: taken=%v active=%q", m.Taken(), m.ActiveExternalProxy())
+	}
+	if e = m.Restore(); e != nil {
+		t.Fatal(e)
+	}
+	if srv, _, _ := k.GetStringValue("ProxyServer"); srv != "127.0.0.1:7890" {
+		t.Fatalf("Restore overwrote external proxy set during TUN: %q", srv)
+	}
+}

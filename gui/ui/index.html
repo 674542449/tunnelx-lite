@@ -26,7 +26,7 @@ try {
       </div>
       <div class="brand-info">
         <strong class="brand-name">txlite</strong>
-        <span class="brand-ver" id="brand-version">v0.5.2</span>
+        <span class="brand-ver" id="brand-version">v0.5.3</span>
       </div>
     </div>
 
@@ -82,9 +82,9 @@ try {
       <div class="tun-row">
         <div class="tun-meta">
           <span class="tun-title">TUN 虚拟网卡</span>
-          <span class="tun-sub" id="tun-sub">接管全部 TCP/UDP</span>
+          <span class="tun-sub" id="tun-sub">接管全部 TCP/UDP（按规则分流）</span>
         </div>
-        <label class="switch" title="开启后将接管系统全部应用流量（支持与绕过大陆或全局规则配合使用）">
+        <label class="switch" title="开启后将接管系统全部应用流量；需全网统一单 IP 请将上方路由规则切换为「全局代理」">
           <input type="checkbox" id="tun-toggle" aria-label="开启 TUN 模式">
           <span class="switch-track"><span class="switch-thumb"></span></span>
         </label>

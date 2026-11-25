@@ -120,6 +120,22 @@ func (p *Proxy) track(c net.Conn, add bool) {
 	}
 	p.mu.Unlock()
 }
+
+// ResetConnections closes active client sockets (SOCKS5 TCP flows, SOCKS5
+// UDP-ASSOCIATE control sockets, and HTTP CONNECT tunnels) so live routing
+// switches (e.g. Bypass CN <-> Global) take effect immediately instead of
+// letting browsers keep reusing stale direct/proxied keep-alive connections.
+func (p *Proxy) ResetConnections() {
+	p.mu.Lock()
+	conns := make([]net.Conn, 0, len(p.connections))
+	for c := range p.connections {
+		conns = append(conns, c)
+	}
+	p.mu.Unlock()
+	for _, c := range conns {
+		_ = c.Close()
+	}
+}
 func (p *Proxy) Close() {
 	p.cancel()
 	if p.socks != nil {

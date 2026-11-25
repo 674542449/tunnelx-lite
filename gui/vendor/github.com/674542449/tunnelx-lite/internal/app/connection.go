@@ -303,6 +303,10 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64) (result e
 		if err = tun.Start(ctx, e.statePath("tun-state.json"), e.settings.SOCKS, []string{c.ServerIP}); err != nil {
 			return err
 		}
+		if err = e.system.DisableForTUN(); err != nil {
+			return err
+		}
+		enabled = true
 		uplink := tun.Uplink()
 		p.SetUplink(uplink.IfIndexV4, uplink.IfIndexV6, uplink.DNSServers)
 	}

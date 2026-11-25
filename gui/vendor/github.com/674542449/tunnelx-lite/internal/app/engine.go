@@ -21,7 +21,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/tunmode"
 )
 
-const Version = "v0.5.2"
+const Version = "v0.5.3"
 
 type Settings struct {
 	SOCKS string `json:"socks_listen"`
@@ -207,7 +207,15 @@ func (e *Engine) Status() map[string]any {
 			state = "degraded"
 		}
 	}
-	s := map[string]any{"version": Version, "connected": e.mux != nil, "connection_state": state, "connection_stage": e.stage, "health": e.health, "preferences": e.preferences, "startup_warning": e.startupWarning, "node_name": e.nodeName, "node_id": e.nodeID, "system_proxy": e.system.Enabled(), "system_proxy_taken": e.system.Taken(), "socks": e.settings.SOCKS, "http": e.settings.HTTP, "logs": filepath.Join(e.root, "logs"), "proxy_recovery_error": e.proxyRecoveryError, "server_count": len(e.servers)}
+	systemProxyTaken := e.system.Taken()
+	tunProxyConflict := ""
+	if e.proxy != nil && e.proxy.TUN {
+		tunProxyConflict = e.system.ActiveExternalProxy()
+		if tunProxyConflict != "" {
+			systemProxyTaken = true
+		}
+	}
+	s := map[string]any{"version": Version, "connected": e.mux != nil, "connection_state": state, "connection_stage": e.stage, "health": e.health, "preferences": e.preferences, "startup_warning": e.startupWarning, "node_name": e.nodeName, "node_id": e.nodeID, "system_proxy": e.system.Enabled(), "system_proxy_taken": systemProxyTaken, "tun_proxy_conflict": tunProxyConflict, "socks": e.settings.SOCKS, "http": e.settings.HTTP, "logs": filepath.Join(e.root, "logs"), "proxy_recovery_error": e.proxyRecoveryError, "server_count": len(e.servers)}
 	s["routing_rules"] = e.ruleInfo
 	s["transport_preference"] = e.preferences.transport()
 	s["tun_enabled"] = e.preferences.TUNEnabled

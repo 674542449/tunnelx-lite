@@ -7,6 +7,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/routing"
 	"golang.org/x/net/dns/dnsmessage"
 	"io"
+	"net"
 	"net/http"
 	"net/netip"
 	"sync"
@@ -437,5 +438,37 @@ func TestTUNDNSSingleflightCoalescing(t *testing.T) {
 	}
 	if calls := remoteCalls.Load(); calls != 1 {
 		t.Fatalf("expected 1 coalesced upstream DNS call, got %d", calls)
+	}
+}
+
+func TestResetConnectionsAndFlushReverseDNS(t *testing.T) {
+	cfg := poolServer(t, func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
+	m, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewProxy(m)
+	defer p.Close()
+
+	// Verify FlushDNSCache drops reverse-DNS mappings as well as DNS cache entries.
+	p.recordDNSAnswers("cip.cc.", makeAReply(1, "cip.cc.", [4]byte{1, 2, 3, 4}))
+	if got := p.lookupReverseDNS(netip.MustParseAddr("1.2.3.4")); got != "cip.cc" {
+		t.Fatalf("expected reverse DNS cip.cc, got %q", got)
+	}
+	p.FlushDNSCache()
+	if got := p.lookupReverseDNS(netip.MustParseAddr("1.2.3.4")); got != "" {
+		t.Fatalf("expected reverse DNS cleared after FlushDNSCache, got %q", got)
+	}
+
+	// Verify ResetConnections immediately closes tracked active client sockets.
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	p.track(a, true)
+	p.ResetConnections()
+	b.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 1)
+	if _, err := b.Read(buf); err == nil {
+		t.Fatal("expected peer pipe read to fail after ResetConnections")
 	}
 }

@@ -233,7 +233,7 @@ function render() {
   const mode = pref.proxy_mode === 'global' ? 'global' : 'bypass_cn';
   const tun = status.tun || {};
 
-  $('brand-version').textContent = status.version || 'v0.5.2';
+  $('brand-version').textContent = status.version || 'v0.5.3';
   $('nav-node-count').textContent = String(servers.length);
   $('header-node-count').textContent = servers.length + ' 个节点';
 
@@ -290,7 +290,10 @@ function render() {
   tunToggle.disabled = busy || on || going;
   const tunSub = $('tun-sub');
   if (tunActive) {
-    tunSub.textContent = tun.ipv6_available ? '已接管 (IPv4+IPv6)' : '已接管 (IPv4)';
+    const fam = tun.ipv6_available ? 'v4+v6' : 'v4';
+    tunSub.textContent = mode === 'global'
+      ? '已接管 · 全局单 IP (' + fam + ')'
+      : '已接管 · 国内直连 (' + fam + ')';
     tunSub.className = 'tun-sub ok';
   } else if (tunEnabled && tun.supported && !tun.elevated) {
     tunSub.textContent = '需管理员权限运行';
@@ -302,7 +305,9 @@ function render() {
     tunSub.textContent = '断开后可切换';
     tunSub.className = 'tun-sub';
   } else {
-    tunSub.textContent = tunEnabled ? '下次连接启用 TUN' : '接管全部 TCP/UDP';
+    tunSub.textContent = tunEnabled
+      ? (mode === 'global' ? '下次连接全网单 IP 接管' : '下次连接启用（国内直连）')
+      : '接管全部 TCP/UDP（按规则分流）';
     tunSub.className = 'tun-sub';
   }
 
@@ -311,9 +316,13 @@ function render() {
   $('speed-down').textContent = bytes(on ? status.download_rate : 0) + '/s';
 
   const taken = status.system_proxy_taken === true;
+  const tunProxyConflict = status.tun_proxy_conflict || '';
   const proxyOn = status.system_proxy === true && !taken;
   const captureEl = $('metric-capture');
-  if (taken) {
+  if (taken && tunActive) {
+    captureEl.textContent = 'TUN 运行中（检测到外部系统代理）';
+    captureEl.className = 'metric-value warn';
+  } else if (taken) {
     captureEl.textContent = '系统代理被其他程序占用';
     captureEl.className = 'metric-value warn';
   } else if (tunActive) {
@@ -337,11 +346,15 @@ function render() {
   const warningParts = [];
   if (status.startup_warning) warningParts.push(status.startup_warning);
   if (status.proxy_recovery_error) warningParts.push(status.proxy_recovery_error);
-  if (taken) warningParts.push('Windows 系统代理已被其他软件接管，部分应用可能未经过 txlite。');
+  if (taken && tunActive) {
+    warningParts.push('检测到 Windows 系统代理被其他程序开启' + (tunProxyConflict ? '（' + tunProxyConflict + '）' : '') + '，浏览器等应用可能会绕过 TUN 虚拟网卡。');
+  } else if (taken) {
+    warningParts.push('Windows 系统代理已被其他软件接管，部分应用可能未经过 txlite。');
+  }
   const warning = warningParts.join(' ');
   $('banner-text').textContent = warning;
   $('banner').hidden = !warning;
-  $('banner-recover').hidden = !status.proxy_recovery_error && !taken;
+  $('banner-recover').hidden = !status.proxy_recovery_error && (!taken || tunActive);
 
   hydrateSettings(false);
 }
@@ -454,7 +467,12 @@ async function connectTo(id) {
   const watch = setInterval(refresh, 350);
   try {
     await bridge().Connect(id);
-    const msg = '已连接 ' + name + '（' + (tunEnabled ? 'TUN + ' : '') + modeLabel + (tunEnabled ? '' : '，已设置系统代理') + '）';
+    const tunHint = tunEnabled
+      ? (pref.proxy_mode === 'global'
+        ? 'TUN + 全局代理：全网统一单 IP 出口'
+        : 'TUN + 绕过大陆：国内站点直连，全网单 IP 请切「全局代理」')
+      : (modeLabel + '，已设置系统代理');
+    const msg = '已连接 ' + name + '（' + tunHint + '）';
     log(msg, 'ok');
     toast('已连接 ' + name, 'ok');
   } finally {
@@ -599,7 +617,7 @@ for (const btn of document.querySelectorAll('.seg-btn')) {
     const domains = (status.preferences?.direct_domains || []).join('\n');
     task('切换路由', async () => {
       await bridge().SaveProxyMode(nextMode, domains);
-      const msg = '路由已切换为「' + modeNames[nextMode] + '」' + (connected() ? '（已即时生效）' : '');
+      const msg = '路由已切换为「' + modeNames[nextMode] + '」' + (connected() ? '（已即时生效并重置旧连接）' : '');
       log(msg, 'ok');
       toast(msg, 'ok');
     });

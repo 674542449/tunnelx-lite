@@ -32,7 +32,7 @@ func isolatedScript(t *testing.T) {
 	script = strings.ReplaceAll(script, "@('0.0.0.0/1','128.0.0.0/1','::/1','8000::/1')", "@('198.19.77.0/24','fd02:198:19::/64')")
 	var lines []string
 	for _, line := range strings.Split(script, "\n") {
-		if strings.Contains(line, "Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses") || strings.Contains(line, "Add-DnsClientNrptRule -Namespace") || strings.Contains(line, "Clear-DnsClientCache") {
+		if (strings.Contains(line, "Set-DnsClientServerAddress") && strings.Contains(line, "-ServerAddresses")) || strings.Contains(line, "Add-DnsClientNrptRule -Namespace") || strings.Contains(line, "Clear-DnsClientCache") {
 			continue
 		}
 		lines = append(lines, line)

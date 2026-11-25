@@ -19,19 +19,30 @@ function Get-UplinkSignature {
     } | Sort-Object)
     return ($items -join ';')
 }
+function Test-IsVirtualAdapter($nic) {
+    if (-not $nic) { return $false }
+    if ($nic.Name -like 'tunnelX-*') { return $true }
+    if ($nic.HardwareInterface -eq $true) { return $false }
+    $text = ($nic.Name + ' ' + $nic.InterfaceDescription)
+    return ($text -match '(?i)(wintun|wireguard|sing-?tun|singbox|clash|mihomo|flclash|v2ray|nekobox|tap-windows|openvpn|tailscale|zerotier|utun|vpn|tunnel)')
+}
 function Get-UplinkInfo {
     $ifV4 = 0
     $ifV6 = 0
     $dns = @()
     $r4 = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceAlias -notlike 'tunnelX-*' } | ForEach-Object {
         $iface = Get-NetIPInterface -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
-        [PSCustomObject]@{ Route = $_; Cost = $_.RouteMetric + $(if ($iface) { $iface.InterfaceMetric } else { 0 }) }
-    } | Sort-Object Cost | Select-Object -First 1)
+        $nic = Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue
+        $isVirt = Test-IsVirtualAdapter $nic
+        [PSCustomObject]@{ Route = $_; Virtual = $isVirt; Cost = $_.RouteMetric + $(if ($iface) { $iface.InterfaceMetric } else { 0 }) }
+    } | Sort-Object Virtual, Cost | Select-Object -First 1)
     if ($r4.Count -gt 0) { $ifV4 = [int]$r4[0].Route.InterfaceIndex }
     $r6 = @(Get-NetRoute -DestinationPrefix '::/0' -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceAlias -notlike 'tunnelX-*' } | ForEach-Object {
         $iface = Get-NetIPInterface -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue
-        [PSCustomObject]@{ Route = $_; Cost = $_.RouteMetric + $(if ($iface) { $iface.InterfaceMetric } else { 0 }) }
-    } | Sort-Object Cost | Select-Object -First 1)
+        $nic = Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue
+        $isVirt = Test-IsVirtualAdapter $nic
+        [PSCustomObject]@{ Route = $_; Virtual = $isVirt; Cost = $_.RouteMetric + $(if ($iface) { $iface.InterfaceMetric } else { 0 }) }
+    } | Sort-Object Virtual, Cost | Select-Object -First 1)
     if ($r6.Count -gt 0) { $ifV6 = [int]$r6[0].Route.InterfaceIndex }
     foreach ($idx in (@($ifV4, $ifV6) | Where-Object { $_ -gt 0 } | Select-Object -Unique)) {
         $addrs = @(Get-DnsClientServerAddress -InterfaceIndex $idx -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ServerAddresses)
@@ -96,6 +107,17 @@ try {
     $exits = @()
     foreach ($address in $cfg.Exempt | Select-Object -Unique) {
         $route = @(Find-NetRoute -RemoteIPAddress $address -ErrorAction SilentlyContinue | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_NetRoute' -and $null -ne $_.NextHop })[0]
+        if ($route -and $route.DestinationPrefix -in @('0.0.0.0/0','0.0.0.0/1','128.0.0.0/1','::/0','::/1','8000::/1')) {
+            $routeNic = Get-NetAdapter -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue
+            if (Test-IsVirtualAdapter $routeNic) {
+                $physIdx = if ($address.Contains(':')) { $uplinkInfo.if_v6 } else { $uplinkInfo.if_v4 }
+                $defPrefix = if ($address.Contains(':')) { '::/0' } else { '0.0.0.0/0' }
+                if ($physIdx -gt 0 -and $physIdx -ne $route.InterfaceIndex) {
+                    $physRoute = @(Get-NetRoute -DestinationPrefix $defPrefix -InterfaceIndex $physIdx -ErrorAction SilentlyContinue | Select-Object -First 1)[0]
+                    if ($physRoute) { $route = $physRoute }
+                }
+            }
+        }
         if (-not $route -and $address -ne $cfg.Exempt[0]) { continue }
         if (-not $route -or $route.InterfaceAlias -like 'tunnelX-*') { throw '无法确定原有节点出口路由' }
         $bits = if ($address.Contains(':')) {128} else {32}
@@ -126,13 +148,20 @@ try {
     Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1 -NlMtuBytes 1500 -DadTransmits 0
     New-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress '198.18.77.1' -PrefixLength 30 -AddressFamily IPv4 -PolicyStore ActiveStore | Out-Null
     $ipv6Enabled = $false
-    try {
-        Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric 1 -NlMtuBytes 1500 -DadTransmits 0 -ErrorAction Stop
-        New-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress 'fd01:198:18::1' -PrefixLength 126 -AddressFamily IPv6 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
-        $ipv6Enabled = $true
-    } catch {
-        # IPv6 may be disabled on the host; continue cleanly in IPv4-only mode.
-        $ipv6Enabled = $false
+    for ($i=0; $i -lt 15; $i++) {
+        try {
+            Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric 1 -NlMtuBytes 1500 -DadTransmits 0 -ErrorAction Stop
+            $existingV6 = @(Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq 'fd01:198:18::1' })
+            if ($existingV6.Count -eq 0) {
+                New-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress 'fd01:198:18::1' -PrefixLength 126 -AddressFamily IPv6 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
+            }
+            $ipv6Enabled = $true
+            break
+        } catch {
+            # On freshly created Wintun adapters TCPIP6 can finish binding slightly after NDIS.
+            if ($uplinkInfo.if_v6 -eq 0 -and $i -ge 2) { break }
+            Start-Sleep -Milliseconds 150
+        }
     }
     $preferred = $false
     for ($i=0; $i -lt 30; $i++) {
@@ -145,11 +174,18 @@ try {
         Start-Sleep -Milliseconds 100
     }
     if (-not $preferred) {
-        # If IPv4 is preferred but IPv6 failed to become preferred, proceed with IPv4 only.
+        # Only fall back to IPv4-only when the host itself has no IPv6 default route,
+        # preventing silent IPv6 leaks on dual-stack Windows hosts.
         $v4Ready = @(Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq '198.18.77.1' -and $_.AddressState -eq 'Preferred' })
-        if ($v4Ready.Count -ge 1) { $ipv6Enabled = $false; $preferred = $true }
+        if ($v4Ready.Count -ge 1 -and $uplinkInfo.if_v6 -eq 0) { $ipv6Enabled = $false; $preferred = $true }
     }
-    if (-not $preferred) { throw 'TUN 虚拟网卡地址未就绪' }
+    if (-not $preferred) {
+        if ($uplinkInfo.if_v6 -gt 0) { throw 'TUN IPv6 虚拟网卡地址未就绪（已阻止 IPv6 泄露，请重试）' }
+        throw 'TUN 虚拟网卡地址未就绪'
+    }
+    if (-not $ipv6Enabled -and $uplinkInfo.if_v6 -gt 0) {
+        throw 'TUN IPv6 接管未就绪（已阻止 IPv6 泄露，请重试）'
+    }
     foreach ($r in $exits) {
         $saved.Routes += $r
         Save-State $saved
@@ -161,6 +197,7 @@ try {
         New-NetRoute -DestinationPrefix $prefix -InterfaceIndex $adapter.ifIndex -NextHop $hop -RouteMetric 1 -PolicyStore ActiveStore | Out-Null
     }
     Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses @('1.1.1.1','8.8.8.8')
+    if ($ipv6Enabled) { try { Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction Stop | Set-DnsClientServerAddress -ServerAddresses @('2606:4700:4700::1111','2001:4860:4860::8888') -ErrorAction Stop } catch { } }
     Add-DnsClientNrptRule -Namespace '.' -NameServers @('1.1.1.1','8.8.8.8') -DisplayName $alias -Comment $alias | Out-Null
     Clear-DnsClientCache
     [Console]::Out.WriteLine('TUN_UPLINK:' + ($uplinkInfo | ConvertTo-Json -Compress))

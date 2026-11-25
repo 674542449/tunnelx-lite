@@ -23,8 +23,9 @@ type Value struct {
 	Number  uint32 `json:"number,omitempty"`
 }
 type Snapshot struct {
-	Values   map[string]Value `json:"values"`
-	OurProxy string           `json:"our_proxy"`
+	Values         map[string]Value `json:"values"`
+	OurProxy       string           `json:"our_proxy,omitempty"`
+	DisabledForTUN bool             `json:"disabled_for_tun,omitempty"`
 }
 type Manager struct {
 	Path  string
@@ -92,6 +93,63 @@ func (m *Manager) Enable() (err error) {
 	}
 	return nil
 }
+
+// DisableForTUN temporarily suspends any active Windows system proxy or PAC
+// script while TUN mode is running so browsers do not send HTTP/HTTPS traffic
+// to a stale or conflicting loopback proxy and bypass the Wintun adapter.
+// Calling Restore puts the original settings back cleanly on disconnect.
+func (m *Manager) DisableForTUN() (err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, e := os.Stat(m.Path); e == nil {
+		return errors.New("saved proxy state exists; restore it before disabling for TUN")
+	}
+	k, e := registry.OpenKey(registry.CURRENT_USER, m.keyPath(), registry.QUERY_VALUE|registry.SET_VALUE)
+	if e != nil {
+		return e
+	}
+	defer k.Close()
+	s := Snapshot{Values: map[string]Value{}, DisabledForTUN: true}
+	n, _, e := k.GetIntegerValue("ProxyEnable")
+	s.Values["ProxyEnable"] = Value{Present: e == nil, Number: uint32(n)}
+	for _, name := range []string{"ProxyServer", "ProxyOverride", "AutoConfigURL"} {
+		v, _, e := k.GetStringValue(name)
+		s.Values[name] = Value{Present: e == nil, String: v}
+	}
+	proxyOn := s.Values["ProxyEnable"].Present && s.Values["ProxyEnable"].Number != 0
+	pacOn := s.Values["AutoConfigURL"].Present && s.Values["AutoConfigURL"].String != ""
+	if !proxyOn && !pacOn {
+		return nil
+	}
+	b, e := json.Marshal(s)
+	if e != nil {
+		return e
+	}
+	if e = os.MkdirAll(filepath.Dir(m.Path), 0700); e != nil {
+		return e
+	}
+	if e = os.WriteFile(m.Path, b, 0600); e != nil {
+		return e
+	}
+	defer func() {
+		if err != nil {
+			if restoreErr := restoreValues(k, s); restoreErr == nil {
+				os.Remove(m.Path)
+			}
+		}
+	}()
+	if e = k.SetDWordValue("ProxyEnable", 0); e != nil {
+		return e
+	}
+	if e = k.DeleteValue("AutoConfigURL"); e != nil && e != registry.ErrNotExist {
+		return e
+	}
+	if m.KeyPath == "" {
+		refresh()
+	}
+	return nil
+}
+
 func (m *Manager) Restore() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -132,6 +190,21 @@ func (m *Manager) restore(orphanOnly bool) error {
 		return e
 	}
 	defer k.Close()
+	if s.DisabledForTUN {
+		enabled, _, e1 := k.GetIntegerValue("ProxyEnable")
+		pac, _, e2 := k.GetStringValue("AutoConfigURL")
+		stillDisabled := (e1 == registry.ErrNotExist || (e1 == nil && enabled == 0)) && (e2 == registry.ErrNotExist || (e2 == nil && pac == ""))
+		if !stillDisabled {
+			return os.Remove(m.Path)
+		}
+		if e = restoreValues(k, s); e != nil {
+			return e
+		}
+		if m.KeyPath == "" {
+			refresh()
+		}
+		return os.Remove(m.Path)
+	}
 	current, _, e := k.GetStringValue("ProxyServer")
 	if e != nil || current != s.OurProxy {
 		return os.Remove(m.Path)
@@ -175,19 +248,32 @@ func restoreValues(k registry.Key, s Snapshot) error {
 	}
 	return nil
 }
+func (m *Manager) readSnapshotLocked() (Snapshot, bool) {
+	b, e := os.ReadFile(m.Path)
+	if e != nil {
+		return Snapshot{}, false
+	}
+	var s Snapshot
+	if json.Unmarshal(b, &s) != nil {
+		return Snapshot{}, false
+	}
+	return s, true
+}
+
 func (m *Manager) Enabled() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, e := os.Stat(m.Path)
-	return e == nil
+	s, ok := m.readSnapshotLocked()
+	return ok && !s.DisabledForTUN
 }
 
 // Taken reports that our proxy is saved as set but another program has since
-// replaced or switched off the Windows proxy.
+// replaced or switched off the Windows proxy (or re-enabled one during TUN).
 func (m *Manager) Taken() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, e := os.Stat(m.Path); e != nil {
+	s, ok := m.readSnapshotLocked()
+	if !ok {
 		return false
 	}
 	k, e := registry.OpenKey(registry.CURRENT_USER, m.keyPath(), registry.QUERY_VALUE)
@@ -195,9 +281,36 @@ func (m *Manager) Taken() bool {
 		return false
 	}
 	defer k.Close()
+	if s.DisabledForTUN {
+		enabled, _, e1 := k.GetIntegerValue("ProxyEnable")
+		pac, _, e2 := k.GetStringValue("AutoConfigURL")
+		return (e1 == nil && enabled != 0) || (e2 == nil && pac != "")
+	}
 	server, _, e1 := k.GetStringValue("ProxyServer")
 	enabled, _, e2 := k.GetIntegerValue("ProxyEnable")
 	return e1 != nil || e2 != nil || server != m.Proxy || enabled != 1
+}
+
+// ActiveExternalProxy returns the active Windows system proxy or PAC URL if one
+// is currently enabled in Internet Settings, or "" if system proxy is off.
+func (m *Manager) ActiveExternalProxy() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k, e := registry.OpenKey(registry.CURRENT_USER, m.keyPath(), registry.QUERY_VALUE)
+	if e != nil {
+		return ""
+	}
+	defer k.Close()
+	if enabled, _, e1 := k.GetIntegerValue("ProxyEnable"); e1 == nil && enabled != 0 {
+		if server, _, e2 := k.GetStringValue("ProxyServer"); e2 == nil && server != "" {
+			return server
+		}
+		return "已开启"
+	}
+	if pac, _, e2 := k.GetStringValue("AutoConfigURL"); e2 == nil && pac != "" {
+		return pac
+	}
+	return ""
 }
 func refresh() {
 	p := windows.NewLazySystemDLL("wininet.dll").NewProc("InternetSetOptionW")
