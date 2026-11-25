@@ -93,8 +93,14 @@ type settings struct {
 	Restore bool
 }
 
-func encodedScript() string {
-	u := utf16.Encode([]rune(script))
+// bootstrapScript reads the UTF-8 Base64-encoded watch.ps1 from line 1 of stdin
+// and executes it with the same StreamReader so subsequent JSON config and EOF
+// signals share the stream cleanly without ever hitting Windows' 32 KiB
+// CreateProcess command-line length limit.
+const bootstrapScript = `$r=[IO.StreamReader]::new([Console]::OpenStandardInput());$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($r.ReadLine()));&([ScriptBlock]::Create($s)) $r`
+
+func encodedBootstrap() string {
+	u := utf16.Encode([]rune(bootstrapScript))
 	b := make([]byte, len(u)*2)
 	for i, c := range u {
 		b[2*i] = byte(c)
@@ -102,11 +108,17 @@ func encodedScript() string {
 	}
 	return base64.StdEncoding.EncodeToString(b)
 }
+
+func encodedScriptLine() string {
+	clean := strings.TrimPrefix(script, "\xef\xbb\xbf")
+	return base64.StdEncoding.EncodeToString([]byte(clean)) + "\n"
+}
+
 func command() *exec.Cmd {
 	return commandContext(context.Background())
 }
 func commandContext(ctx context.Context) *exec.Cmd {
-	c := exec.CommandContext(ctx, filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedScript())
+	c := exec.CommandContext(ctx, filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedBootstrap())
 	c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return c
 }
@@ -158,7 +170,10 @@ func (m *Manager) Start(ctx context.Context, state, socks string, exempt []strin
 	m.state = state
 	m.uplink = Uplink{}
 	m.mu.Unlock()
-	if e = json.NewEncoder(input).Encode(settings{State: state, Runtime: dir, SOCKS: net.JoinHostPort(a.String(), p), Exempt: exempt}); e != nil {
+	if _, e = io.WriteString(input, encodedScriptLine()); e == nil {
+		e = json.NewEncoder(input).Encode(settings{State: state, Runtime: dir, SOCKS: net.JoinHostPort(a.String(), p), Exempt: exempt})
+	}
+	if e != nil {
 		input.Close()
 		c.Process.Kill()
 		c.Wait()
@@ -295,7 +310,7 @@ func Recover(state string) error {
 	defer cancel()
 	c := commandContext(ctx)
 	b, _ := json.Marshal(settings{State: state, Runtime: RuntimeDir(), Restore: true})
-	c.Stdin = strings.NewReader(string(b) + "\n")
+	c.Stdin = strings.NewReader(encodedScriptLine() + string(b) + "\n")
 	c.WaitDelay = 5 * time.Second
 	out, e := c.Output()
 	if e != nil {

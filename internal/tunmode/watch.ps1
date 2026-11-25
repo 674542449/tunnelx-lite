@@ -1,6 +1,7 @@
-﻿$ErrorActionPreference = 'Stop'
+﻿param($inputReader)
+$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$inputReader = [IO.StreamReader]::new([Console]::OpenStandardInput())
+if (-not $inputReader) { $inputReader = [IO.StreamReader]::new([Console]::OpenStandardInput()) }
 $cfg = $inputReader.ReadLine() | ConvertFrom-Json
 $child = $null
 $saved = $null
