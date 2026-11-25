@@ -74,7 +74,8 @@ jobs:
           if [ -x "$STRIP_BIN" ]; then
             "$STRIP_BIN" --strip-unneeded "$OUT_DIR/libtxlitecore.so"
           fi
-          "$NM_BIN" -D "$OUT_DIR/libtxlitecore.so" | grep -q 'Java_com_txlite_android_core_CoreBridge_nativeCall'
+          SYMS=$("$NM_BIN" -D "$OUT_DIR/libtxlitecore.so")
+          echo "$SYMS" | grep -F 'Java_com_txlite_android_core_CoreBridge_nativeCall' >/dev/null
           ls -lh "$OUT_DIR/libtxlitecore.so"
 
       - name: Download and verify official hev-socks5-tunnel.aar (v2.20.0)
