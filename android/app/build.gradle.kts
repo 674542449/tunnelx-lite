@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.txlite.android"
-        minSdk = 26
+        minSdk = 29
         targetSdk = 35
         versionCode = 504
         versionName = "0.5.4"

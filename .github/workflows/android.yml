@@ -53,7 +53,7 @@ jobs:
             yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" >/dev/null
             NDK="$SDK/ndk/27.2.12479018"
           fi
-          CC_BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+          CC_BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang"
           test -x "$CC_BIN"
           echo "Using NDK clang: $CC_BIN"
 
