@@ -2,7 +2,7 @@
 # txlite one-click installer for Ubuntu / Debian.
 #   bash <(curl -fsSL https://raw.githubusercontent.com/674542449/tunnelx-lite/main/scripts/install.sh)
 #   ... install.sh [install|update|uninstall]
-#   Optional: PORT=443 PANEL_PORT=8443 INBOUND=ipv4|ipv6 OUTBOUND=prefer_ipv4|prefer_ipv6|ipv4|ipv6
+#   Optional: PORT=443 PANEL_PORT=8443 INBOUND=ipv4|ipv6 (outbound egress is IPv4-only)
 set -Eeuo pipefail
 REPO=674542449/tunnelx-lite
 BIN=/usr/local/bin/txlite
@@ -138,7 +138,7 @@ install_all(){
   install -d -m 700 -o txlite -g txlite "$DIR"
   enable_bbr
   if test ! -f "$DIR/config.json"; then
-    runuser -u txlite -- "$BIN" -dir "$DIR" -port "${PORT:-0}" -panel-port "${PANEL_PORT:-0}" -inbound "${INBOUND:-}" -outbound "${OUTBOUND:-}" init | tee "$DIR/.first-run"
+    runuser -u txlite -- "$BIN" -dir "$DIR" -port "${PORT:-0}" -panel-port "${PANEL_PORT:-0}" -inbound "${INBOUND:-}" -outbound "ipv4" init | tee "$DIR/.first-run"
     chmod 600 "$DIR/.first-run"
   fi
   write_unit

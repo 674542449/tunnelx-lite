@@ -312,21 +312,27 @@ func (r *Runtime) saveSettings(w http.ResponseWriter, req *http.Request) {
 			hosts = append(hosts, h)
 		}
 	}
-	// IPv6-only modes on a server without working public IPv6 would cut off
-	// every client; refuse them unless the owner supplies their own address.
-	if (b.Inbound == "ipv6" && b.Inbound != old.Inbound && len(hosts) == 0) || (b.OutboundIP == "ipv6" && b.OutboundIP != old.OutboundIP) {
+	// Outbound egress is strictly IPv4-only; inbound stays selectable (dual / ipv4 / ipv6).
+	if b.OutboundIP != "" && b.OutboundIP != "ipv4" {
+		fail(w, 400, "出站落地仅支持 IPv4")
+		return
+	}
+	b.OutboundIP = "ipv4"
+	// IPv6-only inbound on a server without working public IPv6 would cut off
+	// every client; refuse it unless the owner supplies their own address.
+	if b.Inbound == "ipv6" && b.Inbound != old.Inbound && len(hosts) == 0 {
 		ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
 		_, v6 := detectIPs(ctx)
 		cancel()
 		if v6 == "" {
-			fail(w, 400, "没有检测到可用的公网 IPv6，不能设为仅 IPv6；如确有 IPv6，请先在自定义分享地址填写")
+			fail(w, 400, "没有检测到可用的公网 IPv6，不能设为仅 IPv6 入站；如确有 IPv6，请先在自定义分享地址填写")
 			return
 		}
 	}
 	limit := int64(math.Round(b.BandwidthMbps * 125000))
 	r.update(w, func(c *Config) bool {
 		restart := c.Port != b.Port || c.Inbound != b.Inbound || c.OutboundIP != b.OutboundIP || c.BandwidthLimit != limit
-		c.Name, c.Hosts, c.Port, c.Inbound, c.OutboundIP, c.BandwidthLimit = b.Name, hosts, b.Port, b.Inbound, b.OutboundIP, limit
+		c.Name, c.Hosts, c.Port, c.Inbound, c.OutboundIP, c.BandwidthLimit = b.Name, hosts, b.Port, b.Inbound, "ipv4", limit
 		return restart
 	}, "设置已保存")
 }

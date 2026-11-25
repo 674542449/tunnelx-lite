@@ -94,14 +94,15 @@ func TestPanelLoginSettingsAndKeyReset(t *testing.T) {
 		t.Fatal("QR code unavailable")
 	}
 
-	call(t, cl, "POST", base+"api/settings", map[string]any{"name": "bad#name", "port": 18443, "outbound_ip": "", "bandwidth_mbps": 0, "hosts": []string{}}, 400)
-	out := call(t, cl, "POST", base+"api/settings", map[string]any{"name": "新名称", "port": 18443, "outbound_ip": "prefer_ipv6", "bandwidth_mbps": 10, "hosts": []string{"vpn.example.com"}}, 200)
+	call(t, cl, "POST", base+"api/settings", map[string]any{"name": "bad#name", "port": 18443, "outbound_ip": "ipv4", "bandwidth_mbps": 0, "hosts": []string{}}, 400)
+	call(t, cl, "POST", base+"api/settings", map[string]any{"name": "新名称", "port": 18443, "outbound_ip": "prefer_ipv6", "bandwidth_mbps": 10, "hosts": []string{"vpn.example.com"}}, 400)
+	out := call(t, cl, "POST", base+"api/settings", map[string]any{"name": "新名称", "port": 18443, "outbound_ip": "ipv4", "bandwidth_mbps": 10, "hosts": []string{"vpn.example.com"}}, 200)
 	if out["restart"] != true {
-		t.Fatal("outbound and speed changes must restart the proxy")
+		t.Fatal("speed changes must restart the proxy")
 	}
 	saved, _ := Load(r.Dir)
-	if saved.OutboundIP != "prefer_ipv6" || saved.BandwidthLimit != 1250000 || saved.Hosts[0] != "vpn.example.com" {
-		t.Fatal("settings not persisted", saved)
+	if saved.OutboundIP != "ipv4" || saved.BandwidthLimit != 1250000 || saved.Hosts[0] != "vpn.example.com" {
+		t.Fatal("settings not persisted or outbound not locked to ipv4", saved)
 	}
 
 	call(t, cl, "POST", base+"api/token/reset", map[string]any{}, 200)

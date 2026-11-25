@@ -62,9 +62,13 @@ func New(c config.Server) (*Server, error) {
 		return nil, e
 	}
 	s := &Server{Config: c, auth: config.NewAuth(c.Tokens), slots: make(chan struct{}, c.MaxConnections)}
-	s.Resolver = DefaultLookup
+	lookupFn := DefaultLookup
+	if c.OutboundIP == "ipv4" {
+		lookupFn = DefaultLookupIPv4
+	}
+	s.Resolver = lookupFn
 	if c.DNSCacheTTL > 0 {
-		s.dns = &dnsCache{ttl: time.Duration(c.DNSCacheTTL) * time.Second, entries: map[string]dnsCacheEntry{}, inflight: map[string]*dnsInflight{}}
+		s.dns = &dnsCache{ttl: time.Duration(c.DNSCacheTTL) * time.Second, entries: map[string]dnsCacheEntry{}, inflight: map[string]*dnsInflight{}, lookup: lookupFn}
 		s.Resolver = s.dns.Lookup
 	}
 	_ = tlsCfg
@@ -240,7 +244,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.udp(w, r, addresses[0], p)
 		return
 	}
-	conn, e := dialTarget(ctx, addresses, port)
+	tcpNet := "tcp"
+	if s.Config.OutboundIP == "ipv4" {
+		tcpNet = "tcp4"
+	} else if s.Config.OutboundIP == "ipv6" {
+		tcpNet = "tcp6"
+	}
+	conn, e := dialTarget(ctx, tcpNet, addresses, port)
 	if e != nil {
 		status = 502
 		if errors.Is(e, context.DeadlineExceeded) || ctx.Err() != nil {
@@ -720,7 +730,13 @@ type pairRW struct {
 }
 
 func (s *Server) udp(w http.ResponseWriter, r *http.Request, ip net.IP, port int) {
-	conn, e := net.DialUDP("udp", nil, &net.UDPAddr{IP: ip, Port: port})
+	udpNet := "udp"
+	if s.Config.OutboundIP == "ipv4" {
+		udpNet = "udp4"
+	} else if s.Config.OutboundIP == "ipv6" {
+		udpNet = "udp6"
+	}
+	conn, e := net.DialUDP(udpNet, nil, &net.UDPAddr{IP: ip, Port: port})
 	if e != nil {
 		http.Error(w, "Bad Gateway", 502)
 		return
@@ -808,6 +824,9 @@ func DefaultLookup(ctx context.Context, host string) ([]net.IP, error) {
 	}
 	return ips, e
 }
+func DefaultLookupIPv4(ctx context.Context, host string) ([]net.IP, error) {
+	return net.DefaultResolver.LookupIP(ctx, "ip4", host)
+}
 func LogError(e error) {
 	if e != nil && !errors.Is(e, http.ErrServerClosed) {
 		slog.Error("server stopped", "error", fmt.Sprint(e))
@@ -820,6 +839,7 @@ type dnsCache struct {
 	entries  map[string]dnsCacheEntry
 	inflight map[string]*dnsInflight
 	ttl      time.Duration
+	lookup   func(context.Context, string) ([]net.IP, error)
 }
 type dnsCacheEntry struct {
 	ips     []net.IP
@@ -862,7 +882,11 @@ func (c *dnsCache) Lookup(ctx context.Context, host string) ([]net.IP, error) {
 
 	// Decouple shared lookup from a single caller's cancellation with a bounded timeout.
 	lookupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	ips, err := DefaultLookup(lookupCtx, host)
+	fn := c.lookup
+	if fn == nil {
+		fn = DefaultLookup
+	}
+	ips, err := fn(lookupCtx, host)
 	cancel()
 	fl.ips, fl.err = ips, err
 
@@ -1012,7 +1036,10 @@ func outboundOrder(ips []net.IP, policy string) []net.IP {
 // dialTarget races the admitted addresses, starting the next one every 250ms
 // (RFC 8305 style) or as soon as all started attempts failed. A blackholed
 // IPv6 route therefore costs 250ms instead of the whole dial timeout.
-func dialTarget(ctx context.Context, ips []net.IP, port string) (net.Conn, error) {
+func dialTarget(ctx context.Context, network string, ips []net.IP, port string) (net.Conn, error) {
+	if network == "" {
+		network = "tcp"
+	}
 	if len(ips) > 8 {
 		ips = ips[:8]
 	}
@@ -1029,7 +1056,7 @@ func dialTarget(ctx context.Context, ips []net.IP, port string) (net.Conn, error
 			ip := ips[started]
 			started++
 			go func() {
-				c, e := (&net.Dialer{KeepAlive: 30 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port))
+				c, e := (&net.Dialer{KeepAlive: 30 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
 				if tcp, ok := c.(*net.TCPConn); ok {
 					_ = tcp.SetNoDelay(true)
 				}

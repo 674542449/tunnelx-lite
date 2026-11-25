@@ -47,6 +47,21 @@ func (p *Proxy) directDialer(timeout time.Duration) *net.Dialer {
 	return d
 }
 
+// DirectDialContext dials addr directly over the physical uplink interface
+// (bypassing TUN capture routes when TUN is active).
+func (p *Proxy) DirectDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	return p.directDialer(6 * time.Second).DialContext(ctx, network, addr)
+}
+
+// RouteDecision evaluates the live router for target (host:port) without
+// opening a network connection.
+func (p *Proxy) RouteDecision(ctx context.Context, target string) routing.Decision {
+	if r := p.getRouter(); r != nil {
+		return r.Decide(ctx, target)
+	}
+	return routing.Decision{Address: target, Direct: localTarget(target), Reason: "global_proxy"}
+}
+
 // dialDirectContext dials a direct destination, optionally using encrypted
 // domestic DoH (default AliDNS) for public CN domain names in non-TUN mode so
 // ISP UDP/53 hijacking cannot redirect or break direct connections.

@@ -26,7 +26,7 @@ try {
       </div>
       <div class="brand-info">
         <strong class="brand-name">txlite</strong>
-        <span class="brand-ver" id="brand-version">v0.5.3</span>
+        <span class="brand-ver" id="brand-version">v0.5.4</span>
       </div>
     </div>
 
@@ -35,6 +35,10 @@ try {
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/></svg>
         <span>服务器节点</span>
         <span class="nav-badge" id="nav-node-count">0</span>
+      </button>
+      <button type="button" class="nav-item" role="tab" aria-selected="false" data-view="check">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        <span>分流检测</span>
       </button>
       <button type="button" class="nav-item" role="tab" aria-selected="false" data-view="settings">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -182,6 +186,85 @@ try {
             <div class="empty-actions">
               <button type="button" id="empty-paste" class="btn btn-accent">从剪贴板导入</button>
               <button type="button" id="empty-manual" class="btn">手动粘贴链接</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW: SPLIT-ROUTING & IP CHECK -->
+    <section class="view" id="view-check" role="tabpanel" aria-label="分流与 IP 出口检查" hidden>
+      <header class="view-header">
+        <div class="view-title-group">
+          <h1>分流与 IP 出口检查</h1>
+          <span class="muted-sub" id="check-subtitle">检测本机直连 IPv4、节点单 IPv4 落地与常见网站实际分流去向</span>
+        </div>
+        <div class="header-actions">
+          <button id="btn-check-sites" type="button" class="btn btn-accent">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            <span id="btn-check-label">一键检测全部</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="metrics-strip">
+        <div class="metric-card">
+          <span class="metric-label">本机直连 IPv4</span>
+          <strong class="metric-value mono selectable" id="chk-direct-ip">未检测</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">节点落地 IPv4</span>
+          <strong class="metric-value mono selectable" id="chk-proxy-ip">未检测</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">IPv6 落地防护</span>
+          <strong class="metric-value" id="chk-ipv6-guard">仅 IPv4 落地</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">分流汇总</span>
+          <strong class="metric-value" id="chk-summary">点击右上角开始检测</strong>
+        </div>
+      </div>
+
+      <div class="check-toolbar">
+        <div class="log-filters" role="group" aria-label="网站分类筛选">
+          <button type="button" class="chip active" data-check-cat="all">全部</button>
+          <button type="button" class="chip" data-check-cat="ip">测 IP 站点</button>
+          <button type="button" class="chip" data-check-cat="cn">国内常见</button>
+          <button type="button" class="chip" data-check-cat="global">海外常见</button>
+        </div>
+        <form id="check-domain-form" class="custom-check-form">
+          <label for="check-custom-input" class="visually-hidden">自定义域名或网址</label>
+          <input id="check-custom-input" type="text" placeholder="输入任意域名或网址检查分流，如 cip.cc / netflix.com" autocomplete="off">
+          <button type="submit" id="btn-check-custom" class="btn">检查域名</button>
+        </form>
+      </div>
+
+      <progress id="check-progress" class="check-progress" aria-label="正在执行分流与出口 IP 检测" hidden></progress>
+
+      <div class="table-card">
+        <div tabindex="0" role="region" aria-labelledby="check-table-caption" class="table-scroll check-table-wrap">
+          <table id="check-table">
+            <caption id="check-table-caption" class="visually-hidden">常见网站分流规则与实测出口 IP 检查结果</caption>
+            <thead>
+              <tr>
+                <th scope="col" class="chk-col-site">网站</th>
+                <th scope="col" class="chk-col-domain">域名</th>
+                <th scope="col" class="chk-col-route">分流方向与命中规则</th>
+                <th scope="col" class="chk-col-ip">出口 IP</th>
+                <th scope="col" class="chk-col-status">连通耗时</th>
+              </tr>
+            </thead>
+            <tbody id="check-rows"></tbody>
+          </table>
+          <div id="check-empty" class="empty-state">
+            <div class="empty-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            </div>
+            <h2>常见网站分流与出口 IP 检查</h2>
+            <p>一键实测本机宽带 IPv4、节点落地 IPv4、IPv6 阻断状态，以及 19 个国内外常见网站和测 IP 站点的真实分流去向。</p>
+            <div class="empty-actions">
+              <button type="button" id="empty-check-start" class="btn btn-accent">立即检测全部</button>
             </div>
           </div>
         </div>

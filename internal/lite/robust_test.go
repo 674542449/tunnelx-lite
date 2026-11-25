@@ -10,16 +10,23 @@ import (
 )
 
 func TestIPv6OnlyNeedsPublicIPv6(t *testing.T) {
-	_, _, cl, base, password := panelFixture(t)
+	r, _, cl, base, password := panelFixture(t)
 	call(t, cl, "POST", base+"api/login", map[string]string{"password": password}, 200)
 	detectIPs = func(context.Context) (string, string) { return "203.0.113.5", "" }
 	settings := map[string]any{"name": "n", "port": 18443, "inbound": "", "outbound_ip": "ipv6", "bandwidth_mbps": 0, "hosts": []string{}}
 	call(t, cl, "POST", base+"api/settings", settings, 400)
-	settings["outbound_ip"], settings["inbound"] = "", "ipv6"
+	settings["outbound_ip"], settings["inbound"] = "ipv4", "ipv6"
 	call(t, cl, "POST", base+"api/settings", settings, 400)
 	detectIPs = func(context.Context) (string, string) { return "203.0.113.5", "2001:db8::5" }
+	// Outbound IPv6 stays rejected even when public IPv6 exists (landing is IPv4-only).
 	settings["outbound_ip"] = "ipv6"
+	call(t, cl, "POST", base+"api/settings", settings, 400)
+	// Inbound IPv6 succeeds when public IPv6 exists while outbound remains IPv4-only.
+	settings["outbound_ip"] = "ipv4"
 	call(t, cl, "POST", base+"api/settings", settings, 200)
+	if saved, err := Load(r.Dir); err != nil || saved.Inbound != "ipv6" || saved.OutboundIP != "ipv4" {
+		t.Fatalf("expected inbound=ipv6 outbound=ipv4, got %+v err=%v", saved, err)
+	}
 }
 
 // A busy proxy port must not take the panel down with it.

@@ -265,14 +265,11 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64) (result e
 	p.EnableDNSCache()
 	p.SetDNSConfig(dnsCfg)
 	if tunEnabled {
-		if err = e.connectionStage(ctx, attempt, "checking_tun_network"); err != nil {
-			return err
-		}
 		p.TUN = true
-		p.TUNIPv6.Store(m.ProbeTUNIPv6(ctx))
-		if err = ctx.Err(); err != nil {
-			return err
-		}
+		// Outbound landing is IPv4-only (inbound entry still supports IPv4/IPv6).
+		// Suppressing IPv6 egress on TUN immediately blocks AAAA/HTTPS IPv6 DNS
+		// and prevents dual-IP / IPv6 leak even against older servers.
+		p.TUNIPv6.Store(false)
 	}
 	router, err := buildRouter(mode, rules, exceptions, p, dnsCfg.Enabled)
 	if err != nil {

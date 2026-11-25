@@ -27,7 +27,7 @@ func TestDialTargetFallsBackQuickly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	start := time.Now()
-	c, e := dialTarget(ctx, []net.IP{net.ParseIP("192.0.2.1"), net.ParseIP("127.0.0.1")}, port)
+	c, e := dialTarget(ctx, "tcp4", []net.IP{net.ParseIP("192.0.2.1"), net.ParseIP("127.0.0.1")}, port)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -35,7 +35,7 @@ func TestDialTargetFallsBackQuickly(t *testing.T) {
 	if d := time.Since(start); d > 3*time.Second {
 		t.Fatal("fallback took", d)
 	}
-	if _, e = dialTarget(ctx, []net.IP{net.ParseIP("127.0.0.1")}, "1"); e == nil {
+	if _, e = dialTarget(ctx, "tcp4", []net.IP{net.ParseIP("127.0.0.1")}, "1"); e == nil {
 		t.Fatal("closed port accepted")
 	}
 }

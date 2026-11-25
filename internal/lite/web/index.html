@@ -50,20 +50,16 @@
       <form id="settings" class="form">
         <label>名称<input name="name" maxlength="48" required></label>
         <label>代理端口<input name="port" type="number" min="1" max="65535" required></label>
-        <label>入站方式（客户端连接服务器）
+        <label>入站方式（入口：客户端连接服务器，支持 IPv4 / IPv6）
           <select name="inbound">
-            <option value="">双栈（IPv4 + IPv6）</option>
-            <option value="ipv4">仅 IPv4</option>
-            <option value="ipv6">仅 IPv6</option>
+            <option value="">双栈（IPv4 + IPv6 可选）</option>
+            <option value="ipv4">仅 IPv4 入口</option>
+            <option value="ipv6">仅 IPv6 入口</option>
           </select>
         </label>
-        <label>出站方式（服务器访问网站）
-          <select name="outbound_ip">
-            <option value="">自动（按目标解析顺序）</option>
-            <option value="prefer_ipv4">IPv4 优先</option>
-            <option value="prefer_ipv6">IPv6 优先</option>
-            <option value="ipv4">仅 IPv4</option>
-            <option value="ipv6">仅 IPv6</option>
+        <label>出站方式（落地：服务器访问目标网站）
+          <select name="outbound_ip" disabled>
+            <option value="ipv4" selected>仅 IPv4（固定落地，防止 IPv6 泄露与风控）</option>
           </select>
         </label>
         <label>限速 Mbps（整台服务器共享，0 表示不限）<input name="bandwidth_mbps" type="number" min="0" max="8589" step="any" required></label>

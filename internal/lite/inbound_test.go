@@ -23,6 +23,9 @@ func TestInboundFamilyShapesListenerAndLinks(t *testing.T) {
 		if got := c.Server(Dir(t.TempDir())).Network; got != want.network {
 			t.Errorf("%q: listener network %q, want %q", inbound, got, want.network)
 		}
+		if gotOut := c.Server(Dir(t.TempDir())).OutboundIP; gotOut != "ipv4" {
+			t.Errorf("%q: outbound policy %q, want ipv4", inbound, gotOut)
+		}
 		labels := ""
 		for _, l := range Links(c, id, "203.0.113.5", "2001:db8::5") {
 			labels += l.Label + ","

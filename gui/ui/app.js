@@ -21,6 +21,10 @@ let lastTableSignature = '';
 let settingsHydrated = false;
 let lastSavedDomains = '';
 let lastSavedTransport = 'tcp';
+let checkReport = null;
+let customCheckItems = [];
+let checkCat = 'all';
+let checkBusy = false;
 
 const stages = {
   restoring_proxy: '恢复代理中',
@@ -233,7 +237,7 @@ function render() {
   const mode = pref.proxy_mode === 'global' ? 'global' : 'bypass_cn';
   const tun = status.tun || {};
 
-  $('brand-version').textContent = status.version || 'v0.5.3';
+  $('brand-version').textContent = status.version || 'v0.5.4';
   $('nav-node-count').textContent = String(servers.length);
   $('header-node-count').textContent = servers.length + ' 个节点';
 
@@ -290,10 +294,9 @@ function render() {
   tunToggle.disabled = busy || on || going;
   const tunSub = $('tun-sub');
   if (tunActive) {
-    const fam = tun.ipv6_available ? 'v4+v6' : 'v4';
     tunSub.textContent = mode === 'global'
-      ? '已接管 · 全局单 IP (' + fam + ')'
-      : '已接管 · 国内直连 (' + fam + ')';
+      ? '已接管 · 全局单 IPv4'
+      : '已接管 · 国内直连 (IPv4 落地)';
     tunSub.className = 'tun-sub ok';
   } else if (tunEnabled && tun.supported && !tun.elevated) {
     tunSub.textContent = '需管理员权限运行';
@@ -357,6 +360,185 @@ function render() {
   $('banner-recover').hidden = !status.proxy_recovery_error && (!taken || tunActive);
 
   hydrateSettings(false);
+  renderCheckView();
+}
+
+const checkCatLabels = { ip: '测 IP', cn: '国内', global: '海外', custom: '自定义' };
+
+function renderCheckView() {
+  const btn = $('btn-check-sites');
+  if (!btn) return;
+  btn.disabled = checkBusy;
+  $('btn-check-label').textContent = checkBusy ? '检测中…' : '一键检测全部';
+  $('btn-check-custom').disabled = checkBusy;
+  $('empty-check-start').disabled = checkBusy;
+  $('check-progress').hidden = !checkBusy;
+
+  const r = checkReport;
+  const directEl = $('chk-direct-ip');
+  const proxyEl = $('chk-proxy-ip');
+  const ipv6El = $('chk-ipv6-guard');
+  const sumEl = $('chk-summary');
+
+  if (r) {
+    const exit = r.exit || {};
+    if (exit.direct_ip) {
+      directEl.textContent = exit.direct_ip;
+      directEl.className = 'metric-value mono selectable ok';
+    } else {
+      directEl.textContent = exit.direct_error || '获取失败';
+      directEl.className = 'metric-value warn';
+    }
+    if (!r.connected) {
+      proxyEl.textContent = '未连接节点';
+      proxyEl.className = 'metric-value';
+      ipv6El.textContent = '连接后检测';
+      ipv6El.className = 'metric-value';
+    } else {
+      if (exit.proxy_ip) {
+        proxyEl.textContent = exit.proxy_ip;
+        proxyEl.className = 'metric-value mono selectable ok';
+      } else {
+        proxyEl.textContent = exit.proxy_error || '获取失败';
+        proxyEl.className = 'metric-value warn';
+      }
+      if (exit.proxy_ipv6_blocked) {
+        ipv6El.textContent = '仅 IPv4 落地（已阻断）';
+        ipv6El.className = 'metric-value ok';
+      } else {
+        ipv6El.textContent = exit.proxy_ipv6 ? ('检测到 IPv6：' + exit.proxy_ipv6) : '旧服务端允许 IPv6（建议升级）';
+        ipv6El.className = 'metric-value warn';
+      }
+    }
+  }
+
+  const allItems = [...customCheckItems, ...(r?.items || [])];
+  if (allItems.length > 0) {
+    const directCnt = allItems.filter(i => i.route === 'direct').length;
+    const proxyCnt = allItems.filter(i => i.route === 'proxy').length;
+    const modeTxt = modeNames[(r?.proxy_mode || status.preferences?.proxy_mode) === 'global' ? 'global' : 'bypass_cn'];
+    sumEl.textContent = modeTxt + ' · 直连 ' + directCnt + ' / 代理 ' + proxyCnt;
+    sumEl.className = 'metric-value ok';
+  }
+
+  const shown = allItems.filter(i => checkCat === 'all' || i.category === checkCat || i.category === 'custom');
+  $('check-empty').hidden = allItems.length > 0;
+  const rows = shown.map(item => {
+    const tr = el('tr');
+
+    const siteTh = el('th');
+    siteTh.scope = 'row';
+    const wrap = el('span', undefined, 'site-name-wrap');
+    wrap.append(
+      el('span', item.name, 'site-name-text'),
+      el('span', checkCatLabels[item.category] || item.category, 'cat-tag'),
+    );
+    siteTh.append(wrap);
+    siteTh.title = item.name + ' (' + item.url + ')';
+
+    const domTd = el('td', item.domain, 'mono host-cell');
+    domTd.title = item.domain;
+
+    const routeTd = el('td');
+    const rwrap = el('span', undefined, 'route-cell');
+    rwrap.append(
+      el('span', item.route === 'direct' ? '直连' : '代理', 'route-pill ' + (item.route === 'direct' ? 'direct' : 'proxy')),
+      el('span', item.rule || '', 'route-rule'),
+    );
+    routeTd.append(rwrap);
+    routeTd.title = (item.route === 'direct' ? '直连' : '代理') + ' · ' + (item.rule || '');
+
+    const ipTd = el('td');
+    if (item.exit_ip) {
+      const ipWrap = el('span', undefined, 'ip-cell');
+      ipWrap.append(el('span', item.exit_ip, 'mono'));
+      let tagText = '';
+      let tagCls = '';
+      if (item.verified_ip && item.route === 'proxy' && item.exit_kind === 'direct') {
+        tagText = '分流异常';
+        tagCls = 'warn';
+      } else if (item.exit_kind === 'proxy') {
+        tagText = item.verified_ip ? '实测节点' : '节点 IP';
+        tagCls = 'node';
+      } else if (item.exit_kind === 'direct') {
+        tagText = item.verified_ip ? '实测本机' : '本机 IP';
+        tagCls = 'local';
+      } else if (item.verified_ip) {
+        tagText = '实测返回';
+        tagCls = 'node';
+      }
+      if (tagText) ipWrap.append(el('span', tagText, 'ip-tag ' + tagCls));
+      ipTd.append(ipWrap);
+      ipTd.title = item.exit_ip + (tagText ? ' (' + tagText + ')' : '');
+    } else {
+      ipTd.append(el('span', item.preview ? '未连接' : '—', 'host-cell'));
+    }
+
+    const stTd = el('td', undefined, 'chk-cell-status');
+    if (item.preview) {
+      stTd.append(el('span', '规则预览', 'ms-badge ms-busy'));
+    } else if (item.ok) {
+      const cls = item.latency_ms < 250 ? 'ms-good' : item.latency_ms < 700 ? 'ms-warm' : 'ms-bad';
+      const badge = el('span', item.latency_ms + ' ms', 'ms-badge mono ' + cls);
+      badge.title = 'HTTP ' + item.status + ' · ' + item.latency_ms + ' ms';
+      stTd.append(badge);
+    } else {
+      const badge = el('span', item.error || '失败', 'ms-badge ms-bad');
+      badge.title = item.error || '访问失败';
+      stTd.append(badge);
+    }
+
+    tr.append(siteTh, domTd, routeTd, ipTd, stTd);
+    return tr;
+  });
+  $('check-rows').replaceChildren(...rows);
+}
+
+async function runSiteCheck() {
+  if (checkBusy) return;
+  checkBusy = true;
+  renderCheckView();
+  log('正在执行常见网站分流与出口 IP 检测…');
+  try {
+    checkReport = await bridge().CheckSites();
+    const ex = checkReport.exit || {};
+    const parts = [];
+    if (ex.direct_ip) parts.push('本机直连 IPv4：' + ex.direct_ip);
+    if (checkReport.connected && ex.proxy_ip) parts.push('节点落地 IPv4：' + ex.proxy_ip);
+    if (checkReport.connected) parts.push(ex.proxy_ipv6_blocked ? 'IPv6 已阻断（仅 IPv4 落地）' : '警告：服务端未阻断 IPv6');
+    const summary = '分流检测完成' + (parts.length ? '（' + parts.join('，') + '）' : '');
+    log(summary, 'ok');
+    toast('常见网站分流检测完成', 'ok');
+  } catch (e) {
+    const t = errText(e);
+    log('分流检测失败：' + t, 'err');
+    toast('分流检测失败：' + t, 'err');
+  } finally {
+    checkBusy = false;
+    renderCheckView();
+  }
+}
+
+async function runCustomDomainCheck(raw) {
+  const val = raw.trim();
+  if (!val || checkBusy) return;
+  checkBusy = true;
+  renderCheckView();
+  try {
+    const item = await bridge().CheckDomain(val);
+    customCheckItems = [item, ...customCheckItems.filter(x => x.domain !== item.domain)].slice(0, 12);
+    $('check-custom-input').value = '';
+    const msg = item.domain + ' → ' + (item.route === 'direct' ? '直连' : '代理') + '（' + item.rule + (item.exit_ip ? '，出口 ' + item.exit_ip : '') + '）';
+    log('自定义域名检测：' + msg, 'ok');
+    toast(msg, 'ok');
+  } catch (e) {
+    const t = errText(e);
+    log('域名检测失败：' + t, 'err');
+    toast(t, 'err');
+  } finally {
+    checkBusy = false;
+    renderCheckView();
+  }
 }
 
 function hydrateSettings(force) {
@@ -678,7 +860,7 @@ $('menu').onclick = e => {
 };
 document.addEventListener('pointerdown', e => { if (!$('menu').contains(e.target)) closeMenu(); });
 document.addEventListener('contextmenu', e => {
-  if (!e.target.closest('#rows, input, textarea, .log-stream, .kv-list')) e.preventDefault();
+  if (!e.target.closest('#rows, #check-table, .selectable, input, textarea, .log-stream, .kv-list')) e.preventDefault();
 });
 
 $('import-clipboard').onclick = () => task('导入', () => importText());
@@ -782,6 +964,20 @@ $('logs-open-dir').onclick = doOpenLogs;
 
 for (const btn of document.querySelectorAll('.theme-btn')) {
   btn.onclick = () => applyTheme(btn.dataset.themeChoice);
+}
+
+$('btn-check-sites').onclick = runSiteCheck;
+$('empty-check-start').onclick = runSiteCheck;
+$('check-domain-form').onsubmit = e => {
+  e.preventDefault();
+  runCustomDomainCheck($('check-custom-input').value);
+};
+for (const chip of document.querySelectorAll('[data-check-cat]')) {
+  chip.onclick = () => {
+    checkCat = chip.dataset.checkCat;
+    for (const c of document.querySelectorAll('[data-check-cat]')) c.classList.toggle('active', c === chip);
+    renderCheckView();
+  };
 }
 
 for (const chip of document.querySelectorAll('[data-log-filter]')) {

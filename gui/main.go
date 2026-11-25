@@ -81,6 +81,10 @@ func (a *App) Disconnect() error               { return a.engine.Disconnect() }
 func (a *App) CancelConnect() error            { return a.engine.CancelConnect() }
 func (a *App) Probe(id string) (int64, error)  { return a.engine.Probe(id) }
 func (a *App) ProbeAll() []app.ProbeResult     { return a.engine.ProbeAll() }
+func (a *App) CheckSites() app.SiteCheckReport { return a.engine.CheckSites() }
+func (a *App) CheckDomain(domain string) (app.SiteCheckItem, error) {
+	return a.engine.CheckDomain(domain)
+}
 func (a *App) SavePreferences(id string) error { return a.engine.SavePreferences(id) }
 func (a *App) SaveProxyMode(mode, exceptions string) error {
 	return a.engine.SaveProxyMode(mode, exceptions)

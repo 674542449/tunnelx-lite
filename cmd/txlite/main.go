@@ -27,7 +27,7 @@ func main() {
 	port := flag.Int("port", 0, "proxy TCP port (init; 0 picks a random port)")
 	panelPort := flag.Int("panel-port", 0, "panel HTTPS port (init; 0 picks a random port)")
 	inbound := flag.String("inbound", "", "init: inbound family: empty (dual stack), ipv4 or ipv6")
-	outbound := flag.String("outbound", "", "init: outbound policy: empty, prefer_ipv4, prefer_ipv6, ipv4 or ipv6")
+	outbound := flag.String("outbound", "ipv4", "init: outbound egress policy (fixed to ipv4)")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "用法：txlite [-dir 目录] [init|run|link|info|password|version]\n不带参数运行时打开管理菜单。")
 	}
@@ -75,6 +75,8 @@ func randomPort(avoid int) int {
 }
 
 func initialize(d lite.Dir, name string, port, panelPort int, inbound, outbound string) error {
+	// Inbound may be dual-stack / ipv4 / ipv6; outbound egress is always IPv4-only.
+	outbound = "ipv4"
 	probe := lite.Config{Name: "x", Port: 1, PanelPort: 2, PanelPath: "abcdefghij", Token: lite.NewToken(), Inbound: inbound, OutboundIP: outbound}
 	if err := probe.Validate(); err != nil {
 		return err

@@ -19,7 +19,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/config"
 )
 
-const Version = "v0.5.3"
+const Version = "v0.5.4"
 
 type Config struct {
 	Name           string   `json:"name"`
@@ -77,10 +77,13 @@ func (c *Config) Validate() error {
 	default:
 		return errors.New("入站方式无效")
 	}
+	// Outbound landing is strictly IPv4-only so dual-stack / IPv6-inbound nodes
+	// always exit cleanly on a single IPv4 address without IPv6 leak or dual-IP issues.
 	switch c.OutboundIP {
-	case "", "prefer_ipv4", "prefer_ipv6", "ipv4", "ipv6":
+	case "", "ipv4":
+		c.OutboundIP = "ipv4"
 	default:
-		return errors.New("出站方式无效")
+		return errors.New("出站落地仅支持 IPv4")
 	}
 	if c.BandwidthLimit != 0 && (c.BandwidthLimit < 1024 || c.BandwidthLimit > 1<<30) {
 		return errors.New("限速需为 0（不限）或 0.01–8589 Mbps")
@@ -93,11 +96,14 @@ func Load(d Dir) (Config, error) {
 	if e := config.Read(d.Config(), &c); e != nil {
 		return c, e
 	}
+	// Migrate legacy outbound_ip values cleanly to IPv4-only egress on upgrade.
+	c.OutboundIP = "ipv4"
 	return c, c.Validate()
 }
 
 func Save(d Dir, c Config) error {
 	c.NoQUIC = false
+	c.OutboundIP = "ipv4"
 	if e := c.Validate(); e != nil {
 		return e
 	}
@@ -107,7 +113,7 @@ func Save(d Dir, c Config) error {
 
 // Server builds the kernel server configuration from the owner settings.
 func (c Config) Server(d Dir) config.Server {
-	return config.Server{Listen: ":" + strconv.Itoa(c.Port), CertFile: d.Cert(), KeyFile: d.Key(), ECHKeyFile: d.ECH(), InnerName: c.InnerName, InnerCertFile: d.Cert(), InnerKeyFile: d.Key(), Tokens: []string{c.Token}, Network: map[string]string{"ipv4": "tcp4", "ipv6": "tcp6"}[c.Inbound], OutboundIP: c.OutboundIP, BandwidthLimit: c.BandwidthLimit, MaxConnections: 2048, DNSCacheTTL: 300}
+	return config.Server{Listen: ":" + strconv.Itoa(c.Port), CertFile: d.Cert(), KeyFile: d.Key(), ECHKeyFile: d.ECH(), InnerName: c.InnerName, InnerCertFile: d.Cert(), InnerKeyFile: d.Key(), Tokens: []string{c.Token}, Network: map[string]string{"ipv4": "tcp4", "ipv6": "tcp6"}[c.Inbound], OutboundIP: "ipv4", BandwidthLimit: c.BandwidthLimit, MaxConnections: 2048, DNSCacheTTL: 300}
 }
 
 func randomToken(n int) string {

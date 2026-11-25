@@ -24,7 +24,7 @@ func Init(d Dir, name string, port, panelPort int) (Config, string, error) {
 		return Config{}, "", e
 	}
 	id := hex.EncodeToString([]byte(randomToken(6)))[:12]
-	c := Config{Name: name, Port: port, PanelPort: panelPort, PanelPath: randomToken(9), Token: NewToken(), InnerName: "edge-" + id + ".txlite.invalid", PublicName: "gw-" + id + ".txlite.invalid"}
+	c := Config{Name: name, Port: port, PanelPort: panelPort, PanelPath: randomToken(9), Token: NewToken(), InnerName: "edge-" + id + ".txlite.invalid", PublicName: "gw-" + id + ".txlite.invalid", OutboundIP: "ipv4"}
 	password := randomToken(12)
 	hash, e := HashPassword(password)
 	if e != nil {
