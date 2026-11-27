@@ -224,6 +224,9 @@ func (m *Mux) grow() {
 
 // dialCarrier opens one TLS + HTTP/2 connection to the server.
 func (m *Mux) dialCarrier(ctx context.Context) (*h2Carrier, error) {
+	if m.tls == nil {
+		return nil, errors.New("TLS configuration unavailable for this transport")
+	}
 	t := m.tls.Clone()
 	t.NextProtos = []string{"h2"}
 	nd := &net.Dialer{LocalAddr: m.bindAddr, KeepAlive: 30 * time.Second, Control: uplinkControl(m.uplinkIfV4, m.uplinkIfV6)}
@@ -552,6 +555,9 @@ func (m *Mux) Close() error {
 	return nil
 }
 func (m *Mux) PublicGET(ctx context.Context) (*http.Response, error) {
+	if m.IsPulse() {
+		return nil, errors.New("PublicGET is not supported on TXPulse UDP transport")
+	}
 	// Connection checks use their own carriers. Closing or canceling a diagnostic
 	// response must not disturb long-lived application connections.
 	c := m.Config

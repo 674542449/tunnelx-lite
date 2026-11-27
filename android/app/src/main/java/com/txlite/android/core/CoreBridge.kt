@@ -66,7 +66,7 @@ object CoreBridge {
             }
         }
         return EngineStatus(
-            version = d.optString("version", "v0.6.2"),
+            version = d.optString("version", "v0.6.3"),
             connected = d.optBoolean("connected", false),
             connectionState = d.optString("connection_state", "disconnected"),
             connectionStage = d.optString("connection_stage", "disconnected"),

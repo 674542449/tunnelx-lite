@@ -259,7 +259,7 @@ func (m *Mux) SnapshotDiagnostics() {
 	}
 	m.flowMu.Unlock()
 	s := &m.Stats
-	l.Record("heartbeat", map[string]any{"scope": "client", "active_connections": len(flows), "uploaded_bytes": s.Uploaded.Load(), "downloaded_bytes": s.Downloaded.Load(), "tcp_streams": s.TCPStreams.Load(), "tcp_dials": s.TCPDials.Load(), "h2_streams": s.H2Streams.Load(), "h2_dials": s.H2Dials.Load(), "h2_retired": s.H2Retired.Load(), "h2_retries": s.H2Retries.Load(), "udp_dropped": s.UDPDropped.Load(), "logging": l.Status()})
+	l.Record("heartbeat", map[string]any{"scope": "client", "active_connections": len(flows), "uploaded_bytes": s.Uploaded.Load(), "downloaded_bytes": s.Downloaded.Load(), "tcp_streams": s.TCPStreams.Load(), "tcp_dials": s.TCPDials.Load(), "h2_streams": s.H2Streams.Load(), "h2_dials": s.H2Dials.Load(), "h2_retired": s.H2Retired.Load(), "h2_retries": s.H2Retries.Load(), "pulse_streams": s.PulseStreams.Load(), "pulse_dials": s.PulseDials.Load(), "udp_dropped": s.UDPDropped.Load(), "logging": l.Status()})
 	for _, f := range flows {
 		up, down := f.up.Load(), f.down.Load()
 		f.mu.Lock()
@@ -273,7 +273,8 @@ func (m *Mux) SnapshotDiagnostics() {
 	}
 }
 
-// Health checks use an independent H2 carrier and do not affect business counters.
+// Health checks use an independent probe (TXPulse 1-RTT UDP probe for pulse,
+// or an independent H2 carrier for TCP/H2) and do not affect business counters.
 func (m *Mux) RunDiagnostics(ctx context.Context, interval time.Duration) func() {
 	l := m.recorder.Load()
 	if l == nil {
@@ -283,22 +284,10 @@ func (m *Mux) RunDiagnostics(ctx context.Context, interval time.Duration) func()
 	go func() {
 		defer close(done)
 		var wg sync.WaitGroup
-		for _, mode := range []string{"h2"} {
-			mode := mode
+		if m.IsPulse() {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				c := m.Config
-				c.Transport = mode
-				c.H2Connections = 1
-				c.H2MaxAge = 0
-				probe, e := New(c)
-				if e != nil {
-					l.Record("path_probe_failed", map[string]any{"scope": "health_probe", "transport": mode, "error_kind": "configuration_error"})
-					return
-				}
-				probe.recorder.Store(l)
-				defer probe.Close()
 				ticker := time.NewTicker(interval)
 				defer ticker.Stop()
 				failed := false
@@ -309,31 +298,21 @@ func (m *Mux) RunDiagnostics(ctx context.Context, interval time.Duration) func()
 					}
 					started := time.Now()
 					probeCtx, cancel := context.WithTimeout(context.WithValue(ctx, scopeKey{}, "health_probe"), 5*time.Second)
-					res, err := probe.publicGET(probeCtx)
-					status := 0
-					if res != nil {
-						status = res.StatusCode
-						if err == nil {
-							_, err = io.Copy(io.Discard, io.LimitReader(res.Body, 8192))
-						}
-						res.Body.Close()
-					}
+					rtt, err := m.ProbePulse(probeCtx)
 					cancel()
 					if ctx.Err() != nil {
 						return
 					}
 					fields := errorFields(err)
 					fields["scope"] = "health_probe"
-					fields["transport"] = mode
+					fields["transport"] = "txpulse"
 					fields["latency_ms"] = time.Since(started).Milliseconds()
-					fields["http_status"] = status
+					if err == nil {
+						fields["rtt_ms"] = rtt.Milliseconds()
+					}
 					fields["probe_started_at"] = started.UTC().Format(time.RFC3339Nano)
-					fields["ech_accepted"] = probe.LastECH.Load()
-					if err != nil || status != 200 {
-						fields["failure_stage"] = "transport_or_read"
-						if err == nil {
-							fields["failure_stage"] = "public_http_status"
-						}
+					if err != nil {
+						fields["failure_stage"] = "txpulse_handshake"
 						if !failed {
 							failureStarted = started
 						}
@@ -355,6 +334,80 @@ func (m *Mux) RunDiagnostics(ctx context.Context, interval time.Duration) func()
 					}
 				}
 			}()
+		} else {
+			for _, mode := range []string{"h2"} {
+				mode := mode
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					c := m.Config
+					c.Transport = mode
+					c.H2Connections = 1
+					c.H2MaxAge = 0
+					probe, e := New(c)
+					if e != nil {
+						l.Record("path_probe_failed", map[string]any{"scope": "health_probe", "transport": mode, "error_kind": "configuration_error"})
+						return
+					}
+					probe.recorder.Store(l)
+					defer probe.Close()
+					ticker := time.NewTicker(interval)
+					defer ticker.Stop()
+					failed := false
+					var failureStarted time.Time
+					for {
+						if ctx.Err() != nil {
+							return
+						}
+						started := time.Now()
+						probeCtx, cancel := context.WithTimeout(context.WithValue(ctx, scopeKey{}, "health_probe"), 5*time.Second)
+						res, err := probe.publicGET(probeCtx)
+						status := 0
+						if res != nil {
+							status = res.StatusCode
+							if err == nil {
+								_, err = io.Copy(io.Discard, io.LimitReader(res.Body, 8192))
+							}
+							res.Body.Close()
+						}
+						cancel()
+						if ctx.Err() != nil {
+							return
+						}
+						fields := errorFields(err)
+						fields["scope"] = "health_probe"
+						fields["transport"] = mode
+						fields["latency_ms"] = time.Since(started).Milliseconds()
+						fields["http_status"] = status
+						fields["probe_started_at"] = started.UTC().Format(time.RFC3339Nano)
+						fields["ech_accepted"] = probe.LastECH.Load()
+						if err != nil || status != 200 {
+							fields["failure_stage"] = "transport_or_read"
+							if err == nil {
+								fields["failure_stage"] = "public_http_status"
+							}
+							if !failed {
+								failureStarted = started
+							}
+							failed = true
+							l.Record("path_probe_failed", fields)
+						} else {
+							if failed {
+								fields["observed_failure_window_ms"] = time.Since(failureStarted).Milliseconds()
+								l.Record("path_probe_recovered", fields)
+							} else {
+								l.Record("path_probe_ok", fields)
+							}
+							failed = false
+						}
+						select {
+						case <-ctx.Done():
+							return
+						case <-ticker.C:
+						}
+					}
+				}()
+			}
 		}
 		ticker := time.NewTicker(interval)
 		carrierTicker := time.NewTicker(time.Second)

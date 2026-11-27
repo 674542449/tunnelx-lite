@@ -70,14 +70,18 @@ func (u *UI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/probe":
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		var res *http.Response
-		res, e = u.Mux.PublicGET(ctx)
-		if e == nil {
-			io.Copy(io.Discard, io.LimitReader(res.Body, 8192))
-			res.Body.Close()
-			if res.StatusCode != 200 {
-				http.Error(w, "Public service check failed", 502)
-				return
+		if u.Mux.IsPulse() {
+			_, e = u.Mux.ProbePulse(ctx)
+		} else {
+			var res *http.Response
+			res, e = u.Mux.PublicGET(ctx)
+			if e == nil {
+				io.Copy(io.Discard, io.LimitReader(res.Body, 8192))
+				res.Body.Close()
+				if res.StatusCode != 200 {
+					http.Error(w, "Public service check failed", 502)
+					return
+				}
 			}
 		}
 	case "/api/exit":

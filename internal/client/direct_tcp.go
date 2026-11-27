@@ -193,6 +193,9 @@ func (m *Mux) popDirectTLS() (directEntry, bool) {
 }
 
 func (m *Mux) dialDirectTLS(ctx context.Context) (directEntry, error) {
+	if m.tls == nil {
+		return directEntry{}, errors.New("TLS configuration unavailable for this transport")
+	}
 	t := m.tls.Clone()
 	t.NextProtos = []string{"http/1.1"}
 	nd := &net.Dialer{LocalAddr: m.bindAddr, KeepAlive: 30 * time.Second, Control: uplinkControl(m.uplinkIfV4, m.uplinkIfV6)}

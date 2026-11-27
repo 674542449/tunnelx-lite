@@ -1,6 +1,7 @@
 package mobile
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
@@ -8,11 +9,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"net"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/674542449/tunnelx-lite/internal/config"
 	"github.com/674542449/tunnelx-lite/internal/pki"
 	"github.com/674542449/tunnelx-lite/internal/pulse"
+	"github.com/674542449/tunnelx-lite/internal/server"
 	"github.com/674542449/tunnelx-lite/internal/share"
 )
 
@@ -161,4 +168,117 @@ func TestMobileCoreRPCFlow(t *testing.T) {
 	}
 
 	mustCall(t, &svc, "remove", map[string]string{"id": id})
+}
+
+func TestMobileCoreTXPulseConnectAndDiagnosticsNoCrash(t *testing.T) {
+	dir := t.TempDir()
+	certPEM, keyPEM, err := pki.SelfSigned([]string{"pulse-mobile-e2e.local"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certFile := filepath.Join(dir, "pulse-cert.pem")
+	keyFile := filepath.Join(dir, "pulse-key.pem")
+	if err := os.WriteFile(certFile, certPEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, keyPEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	uc, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	udpPort := uc.LocalAddr().(*net.UDPAddr).Port
+	_ = uc.Close()
+
+	tokRaw := make([]byte, 32)
+	_, _ = rand.Read(tokRaw)
+	tok := base64.RawURLEncoding.EncodeToString(tokRaw)
+	obfs := pulse.GenerateObfsKey()
+
+	srv, err := server.New(config.Server{
+		Listen:        "127.0.0.1:0",
+		CertFile:      certFile,
+		KeyFile:       keyFile,
+		PulseListen:   net.JoinHostPort("127.0.0.1", strconv.Itoa(udpPort)),
+		PulseCertFile: certFile,
+		PulseKeyFile:  keyFile,
+		PulseObfs:     obfs,
+		Tokens:        []string{tok},
+		Network:       "tcp4",
+		OutboundIP:    "ipv4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps, err := srv.NewPulseServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go ps.Serve(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	blk, _ := pem.Decode(certPEM)
+	pCert, _ := x509.ParseCertificate(blk.Bytes)
+	pLink := share.Link{
+		Protocol: share.PulseScheme,
+		Name:     "Android TXPulse 测试",
+		Host:     "127.0.0.1",
+		Port:     udpPort,
+		Token:    tok,
+		CertPin:  config.CertPin(pCert),
+		ObfsKey:  obfs,
+	}
+
+	// Find two free loopback TCP ports for SOCKS5 and HTTP listeners.
+	l1, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	socksAddr := l1.Addr().String()
+	_ = l1.Close()
+	l2, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpAddr := l2.Addr().String()
+	_ = l2.Close()
+
+	var svc Service
+	if err := svc.Init(t.TempDir(), socksAddr, httpAddr); err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	mustCall(t, &svc, "import", map[string]string{"text": pLink.String()})
+	rawServers := svc.Call("servers", nil)
+	var srvResp struct {
+		OK   bool `json:"ok"`
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rawServers, &srvResp); err != nil || !srvResp.OK || len(srvResp.Data) != 1 {
+		t.Fatalf("servers failed: %s", string(rawServers))
+	}
+	nodeID := srvResp.Data[0].ID
+
+	// Connect via Android ExternalTUN path (launches RunDiagnostics + health checks).
+	mustCall(t, &svc, "connect", map[string]any{
+		"id":          nodeID,
+		"dns_servers": []string{"223.5.5.5"},
+	})
+	// Allow background RunDiagnostics & health goroutines to run and ensure zero panics.
+	time.Sleep(350 * time.Millisecond)
+
+	st := mustCall(t, &svc, "status", nil)
+	if st["connected"] != true || st["transport"] != "txpulse" {
+		t.Fatalf("unexpected connected status: %+v", st)
+	}
+	mustCall(t, &svc, "migrate_network", nil)
+	time.Sleep(150 * time.Millisecond)
+	mustCall(t, &svc, "disconnect", nil)
 }

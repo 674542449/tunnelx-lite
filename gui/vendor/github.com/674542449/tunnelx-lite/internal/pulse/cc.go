@@ -423,11 +423,19 @@ type CCStats struct {
 }
 
 func (c *congestionController) Snapshot() CCStats {
+	loss := c.lossRate
+	if math.IsNaN(loss) || math.IsInf(loss, 0) || loss < 0 {
+		loss = 0
+	}
+	mbps := c.pacingRate * 8 / 1e6
+	if math.IsNaN(mbps) || math.IsInf(mbps, 0) || mbps < 0 {
+		mbps = 0
+	}
 	return CCStats{
 		SRTTMs:     c.srtt.Milliseconds(),
 		MinRTTMs:   c.minRTT.Milliseconds(),
-		LossRate:   math.Round(c.lossRate*10000) / 10000,
-		PacingMbps: math.Round((c.pacingRate*8/1e6)*10) / 10,
+		LossRate:   math.Round(loss*10000) / 10000,
+		PacingMbps: math.Round(mbps*10) / 10,
 		CwndBytes:  c.cwnd,
 	}
 }

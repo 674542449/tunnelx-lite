@@ -546,6 +546,16 @@ func (c *Client) MigrateSocket(ctx context.Context) error {
 		return err
 	}
 
+	// 先检查会话是否仍然存活并原子更新活跃连接句柄，避免会话已关闭时泄漏新 socket
+	c.mu.Lock()
+	if c.closed || c.sess != sess || !sess.Alive() {
+		c.mu.Unlock()
+		_ = newConn.Close()
+		return errSessionClosed
+	}
+	c.conn = newConn
+	c.mu.Unlock()
+
 	sess.SetRawSend(func(pkt []byte) error {
 		c.targetMu.RLock()
 		dst := c.target
@@ -556,13 +566,6 @@ func (c *Client) MigrateSocket(ctx context.Context) error {
 		_, err := newConn.WriteToUDP(pkt, dst)
 		return err
 	})
-
-	// 先更新活跃连接句柄并启动新 socket 读循环，再延迟关闭旧 socket（零中断平滑迁移）
-	c.mu.Lock()
-	if c.sess == sess {
-		c.conn = newConn
-	}
-	c.mu.Unlock()
 
 	go func() {
 		defer func() {

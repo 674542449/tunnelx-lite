@@ -5,6 +5,7 @@ package mobile
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/674542449/tunnelx-lite/internal/app"
@@ -105,7 +106,12 @@ func decodePayload(raw []byte, dst any) error {
 
 // Call routes an action + UTF-8 JSON payload to Engine and always returns a
 // valid UTF-8 JSON rpcResponse.
-func (s *Service) Call(action string, payload []byte) []byte {
+func (s *Service) Call(action string, payload []byte) (resp []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			resp = errJSON(fmt.Errorf("内核异常：%v", r))
+		}
+	}()
 	eng, err := s.getEngine()
 	if err != nil {
 		return errJSON(err)

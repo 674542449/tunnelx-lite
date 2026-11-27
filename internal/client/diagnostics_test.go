@@ -3,9 +3,13 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/674542449/tunnelx-lite/internal/config"
 	"github.com/674542449/tunnelx-lite/internal/diagnostics"
+	"github.com/674542449/tunnelx-lite/internal/pulse"
 	"io"
 	"net/http"
 	"os"
@@ -141,4 +145,50 @@ func TestHealthProbeRecoveryDoesNotChangeBusinessCounters(t *testing.T) {
 	if m.Stats.H2Dials.Load() != 0 {
 		t.Fatal("health checks affected business counters")
 	}
+}
+
+func TestPulseDiagnosticsAndTLSGuardsDoNotPanic(t *testing.T) {
+	tokRaw := make([]byte, 32)
+	_, _ = rand.Read(tokRaw)
+	pinRaw := make([]byte, 32)
+	_, _ = rand.Read(pinRaw)
+	m, err := New(config.Client{
+		Protocol:       "txpulse",
+		ServerIP:       "127.0.0.1",
+		Port:           19,
+		Token:          base64.RawURLEncoding.EncodeToString(tokRaw),
+		Transport:      "pulse",
+		ObfsKey:        pulse.GenerateObfsKey(),
+		CertPin:        base64.RawURLEncoding.EncodeToString(pinRaw),
+		ConnectTimeout: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if _, err := m.PublicGET(ctx); err == nil {
+		t.Fatal("expected PublicGET to fail cleanly on TXPulse")
+	}
+	if _, err := m.dialCarrier(ctx); err == nil {
+		t.Fatal("expected dialCarrier to fail cleanly when tls config is nil")
+	}
+	if _, err := m.dialDirectTLS(ctx); err == nil {
+		t.Fatal("expected dialDirectTLS to fail cleanly when tls config is nil")
+	}
+
+	dir := t.TempDir()
+	l, err := diagnostics.New(dir, diagnostics.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetDiagnostics(l)
+	dctx, dcancel := context.WithCancel(context.Background())
+	wait := m.RunDiagnostics(dctx, 100*time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
+	dcancel()
+	wait()
+	l.Close()
 }

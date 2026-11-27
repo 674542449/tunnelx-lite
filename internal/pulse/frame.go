@@ -379,7 +379,7 @@ func parseFrames(buf []byte) ([]Frame, error) {
 			off += n
 
 			dlen, n, err := readUvarint(buf[off:])
-			if err != nil || off+n+int(dlen) > len(buf) {
+			if err != nil || dlen > uint64(len(buf)-off-n) {
 				return nil, io.ErrUnexpectedEOF
 			}
 			off += n
@@ -425,7 +425,7 @@ func parseFrames(buf []byte) ([]Frame, error) {
 			off++
 
 			dlen, n, err := readUvarint(buf[off:])
-			if err != nil || off+n+int(dlen) > len(buf) {
+			if err != nil || dlen > uint64(len(buf)-off-n) {
 				return nil, io.ErrUnexpectedEOF
 			}
 			off += n
@@ -501,7 +501,7 @@ func parseFrames(buf []byte) ([]Frame, error) {
 				return nil, errors.New("txpulse: invalid udp addr flag")
 			}
 			dlen, n, err := readUvarint(buf[off:])
-			if err != nil || off+n+int(dlen) > len(buf) {
+			if err != nil || dlen > uint64(len(buf)-off-n) {
 				return nil, io.ErrUnexpectedEOF
 			}
 			off += n
@@ -530,7 +530,7 @@ func parseFrames(buf []byte) ([]Frame, error) {
 
 		case FramePadding:
 			plen, n, err := readUvarint(buf[off:])
-			if err != nil || off+n+int(plen) > len(buf) {
+			if err != nil || plen > uint64(len(buf)-off-n) {
 				return nil, io.ErrUnexpectedEOF
 			}
 			off += n + int(plen)
