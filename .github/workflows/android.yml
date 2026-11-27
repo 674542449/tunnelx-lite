@@ -149,7 +149,7 @@ jobs:
           gh release upload "$TAG" dist-android/txlite-android-arm64.apk --clobber
           # Update SHA256SUMS on the release to include the Android APK checksum.
           if gh release download "$TAG" -p SHA256SUMS -O dist-android/SHA256SUMS 2>/dev/null; then
-            grep -v 'txlite-android-arm64.apk' dist-android/SHA256SUMS > dist-android/SHA256SUMS.new || true
+            tr -d '\r' < dist-android/SHA256SUMS | grep -v 'txlite-android-arm64.apk' > dist-android/SHA256SUMS.new || true
             cat dist-android/txlite-android-arm64.apk.sha256 >> dist-android/SHA256SUMS.new
             mv dist-android/SHA256SUMS.new dist-android/SHA256SUMS
             gh release upload "$TAG" dist-android/SHA256SUMS --clobber

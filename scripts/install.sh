@@ -25,8 +25,9 @@ download(){
   echo "下载 txlite（linux-$arch）……"
   curl -fsSL --retry 3 -o "$work/txlite" "$base/txlite-linux-$arch"
   curl -fsSL --retry 3 -o "$work/SHA256SUMS" "$base/SHA256SUMS"
-  want=$(grep -E "[ *]txlite-linux-$arch\$" "$work/SHA256SUMS" | cut -d' ' -f1)
-  test -n "$want" && test "$(sha256sum "$work/txlite" | cut -d' ' -f1)" = "$want" || die "下载文件校验失败"
+  want=$(tr -d '\r' < "$work/SHA256SUMS" | grep -E "[ *]txlite-linux-$arch\$" | cut -d' ' -f1 || true)
+  test -n "$want" || die "SHA256SUMS 中未找到 txlite-linux-$arch 校验记录"
+  test "$(sha256sum "$work/txlite" | cut -d' ' -f1)" = "$want" || die "下载文件校验失败"
   install -m 755 "$work/txlite" "$BIN.new" && mv -f "$BIN.new" "$BIN"
 }
 
