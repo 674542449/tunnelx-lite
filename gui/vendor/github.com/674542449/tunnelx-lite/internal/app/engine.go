@@ -21,7 +21,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/tunmode"
 )
 
-const Version = "v0.6.1"
+const Version = "v0.6.2"
 
 type Settings struct {
 	SOCKS string `json:"socks_listen"`
@@ -34,7 +34,8 @@ type Preferences struct {
 	ProxyMode     string   `json:"proxy_mode"`
 	TUNEnabled    bool     `json:"tun_enabled,omitempty"`
 	DirectDomains []string `json:"direct_domains"`
-	Transport     string   `json:"transport,omitempty"` // "tcp" (default, direct TLS 1.3) or "h2" (multiplexed)
+	DirectPresets []string `json:"direct_presets,omitempty"` // 可选开启的内置直连规则包，如 ["netease", "tencent"]
+	Transport     string   `json:"transport,omitempty"`      // "tcp" (direct TLS 1.3 + Vision)
 	// DNSOverride enables encrypted split-horizon DNS (default true when nil):
 	// domestic CN domains use encrypted DoH (default AliDNS + DNSPod), while
 	// overseas/unknown domains resolve through the encrypted proxy tunnel.
@@ -149,6 +150,11 @@ func New(root string, settings Settings) (*Engine, error) {
 			if p.Transport != "tcp" {
 				p.Transport = "tcp"
 			}
+			if norm, nerr := routing.NormalizeDirectPresets(p.DirectPresets); nerr == nil {
+				p.DirectPresets = norm
+			} else {
+				p.DirectPresets = nil
+			}
 			e.preferences = p
 		} else {
 			e.startupWarning += " 本机偏好无法读取，已使用默认设置。"
@@ -212,6 +218,8 @@ func (e *Engine) Status() map[string]any {
 	}
 	s := map[string]any{"version": Version, "connected": e.mux != nil, "connection_state": state, "connection_stage": e.stage, "health": e.health, "preferences": e.preferences, "startup_warning": e.startupWarning, "node_name": e.nodeName, "node_id": e.nodeID, "system_proxy": e.system.Enabled(), "system_proxy_taken": systemProxyTaken, "tun_proxy_conflict": tunProxyConflict, "socks": e.settings.SOCKS, "http": e.settings.HTTP, "logs": filepath.Join(e.root, "logs"), "proxy_recovery_error": e.proxyRecoveryError, "server_count": len(e.servers)}
 	s["routing_rules"] = e.ruleInfo
+	s["direct_presets"] = append([]string(nil), e.preferences.DirectPresets...)
+	s["available_direct_presets"] = routing.BuiltinDirectPresets()
 	s["transport_preference"] = e.preferences.transport()
 	s["tun_enabled"] = e.preferences.TUNEnabled
 	s["tun_active"] = e.proxy != nil && e.proxy.TUN

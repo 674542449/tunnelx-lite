@@ -268,3 +268,64 @@ func TestGlobalModeRespectsLocalPrivateAndExceptions(t *testing.T) {
 		}
 	}
 }
+
+func TestBuiltinDirectPresetsNetEaseAndTencent(t *testing.T) {
+	rules, e := Builtin()
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, err := NormalizeDirectPresets([]string{"unknown_vendor"}); err == nil {
+		t.Fatal("unknown preset accepted")
+	}
+
+	// Only NetEase enabled in Global mode: NetEase goes direct + domestic DNS, Tencent & Google stay proxied.
+	neRules, err := BuildDirectPresetsRules([]string{"netease"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rNE, err := NewGlobal(rules, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rNE.DirectPresets = neRules
+	if !rNE.HasExceptions() {
+		t.Fatal("expected HasExceptions() true when direct preset enabled")
+	}
+	for _, host := range []string{"music.163.com", "m7.music.126.net", "nosdn.127.net", "api.netease.com", "battlenet.com.cn", "dict.youdao.com"} {
+		d := rNE.Decide(context.Background(), host+":443")
+		if !d.Direct || d.Reason != "preset_direct" {
+			t.Errorf("netease %s: got %+v, want direct/preset_direct", host, d)
+		}
+		if !rNE.IsDomesticDomain(host) || rNE.IsProxyDomain(host) {
+			t.Errorf("netease %s: expected domestic DNS and non-proxy", host)
+		}
+	}
+	if d := rNE.Decide(context.Background(), "wx.qq.com:443"); d.Direct {
+		t.Fatalf("tencent should stay proxied when only netease enabled: %+v", d)
+	}
+
+	// Only Tencent enabled in Global mode: Tencent goes direct + domestic DNS, NetEase & overseas WeTV stay proxied.
+	tcRules, err := BuildDirectPresetsRules([]string{"tencent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rTC, err := NewGlobal(rules, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rTC.DirectPresets = tcRules
+	for _, host := range []string{"wx.qq.com", "szshort.weixin.qq.com", "api.wechat.com", "servicewechat.com", "meeting.tencent.com", "wegame.com.cn", "cdn.myqcloud.com", "lol.qq.com"} {
+		d := rTC.Decide(context.Background(), host+":443")
+		if !d.Direct || d.Reason != "preset_direct" {
+			t.Errorf("tencent %s: got %+v, want direct/preset_direct", host, d)
+		}
+		if !rTC.IsDomesticDomain(host) || rTC.IsProxyDomain(host) {
+			t.Errorf("tencent %s: expected domestic DNS and non-proxy", host)
+		}
+	}
+	for _, proxied := range []string{"music.163.com", "wetv.vip", "google.com"} {
+		if d := rTC.Decide(context.Background(), proxied+":443"); d.Direct {
+			t.Errorf("%s should remain proxied when only tencent enabled: %+v", proxied, d)
+		}
+	}
+}

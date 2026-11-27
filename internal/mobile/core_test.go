@@ -102,12 +102,16 @@ func TestMobileCoreRPCFlow(t *testing.T) {
 
 	mustCall(t, &svc, "rename", map[string]string{"id": id, "name": "🇯🇵 东京高速"})
 	mustCall(t, &svc, "save_mode", map[string]string{"mode": "global", "direct_domains": "corp.example.com"})
+	mustCall(t, &svc, "save_direct_presets", map[string]any{"presets": []string{"netease", "tencent"}})
 	mustCall(t, &svc, "save_dns", map[string]any{"enabled": true, "domestic": "https://223.5.5.5/dns-query", "remote": "1.1.1.1:53"})
 	mustCall(t, &svc, "save_transport", map[string]string{"transport": "tcp"})
 
 	st := mustCall(t, &svc, "status", nil)
 	if st["transport_preference"] != "tcp" {
 		t.Fatalf("unexpected transport_preference: %v", st["transport_preference"])
+	}
+	if presets, ok := st["direct_presets"].([]any); !ok || len(presets) != 2 {
+		t.Fatalf("unexpected direct_presets: %v", st["direct_presets"])
 	}
 
 	sh := mustCall(t, &svc, "share_link", map[string]string{"id": id})

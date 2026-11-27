@@ -136,6 +136,8 @@ func ruleReasonLabel(reason string, direct bool) string {
 		return "海外代理域名"
 	case "domain_direct":
 		return "大陆/例外域名直连"
+	case "preset_direct":
+		return "内置直连规则（网易/腾讯）"
 	case "ip_direct":
 		return "大陆/内网 IP 直连"
 	case "resolved_cn_ip":
@@ -201,10 +203,11 @@ func (e *Engine) snapshotCheckEnv() (connected, tunActive bool, nodeName, mode, 
 	httpAddr = e.settings.HTTP
 	rules := e.rules
 	exceptions := joinLines(e.preferences.DirectDomains)
+	presets := append([]string(nil), e.preferences.DirectPresets...)
 	dnsOn := e.preferences.dnsConfig().Enabled
 	e.mu.Unlock()
 	if !connected {
-		fallbackRouter, _ = buildRouter(mode, rules, exceptions, nil, dnsOn)
+		fallbackRouter, _ = buildRouter(mode, rules, exceptions, presets, nil, dnsOn)
 	}
 	return
 }

@@ -20,7 +20,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/pulse"
 )
 
-const Version = "v0.6.1"
+const Version = "v0.6.2"
 
 type Config struct {
 	Name           string   `json:"name"`

@@ -421,6 +421,19 @@ private fun TxliteRootApp(
                 3 -> SettingsScreen(
                     status = status,
                     connected = vpnEvent.running || vpnEvent.connecting || status.connected,
+                    onToggleDirectPreset = { presetId, enabled ->
+                        scope.launch {
+                            val next = status.directPresets.toMutableSet()
+                            if (enabled) next.add(presetId) else next.remove(presetId)
+                            runCatching { withContext(Dispatchers.IO) { CoreBridge.saveDirectPresets(next.toList()) } }
+                                .onSuccess {
+                                    refreshState()
+                                    val presetName = status.availableDirectPresets.find { it.id == presetId }?.name ?: presetId
+                                    showMessage((if (enabled) "已启用「" else "已关闭「") + presetName + "」" + if (status.connected) "并立即生效" else "")
+                                }
+                                .onFailure { showMessage(it.message ?: "规则切换失败") }
+                        }
+                    },
                     onSaveDirectDomains = { domains ->
                         scope.launch {
                             runCatching { withContext(Dispatchers.IO) { CoreBridge.saveProxyMode(status.proxyMode, domains) } }

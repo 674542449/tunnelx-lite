@@ -16,7 +16,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/tunmode"
 )
 
-func buildRouter(mode string, rules *routing.Rules, exceptions string, liveProxy *client.Proxy, dnsOverride bool) (*routing.Router, error) {
+func buildRouter(mode string, rules *routing.Rules, exceptions string, presets []string, liveProxy *client.Proxy, dnsOverride bool) (*routing.Router, error) {
 	var r *routing.Router
 	var err error
 	if mode == routing.Global {
@@ -26,6 +26,11 @@ func buildRouter(mode string, rules *routing.Rules, exceptions string, liveProxy
 	}
 	if err != nil {
 		return nil, err
+	}
+	if presetRules, perr := routing.BuildDirectPresetsRules(presets); perr != nil {
+		return nil, perr
+	} else {
+		r.DirectPresets = presetRules
 	}
 	if liveProxy != nil && dnsOverride {
 		r.Lookup = liveProxy.LookupDomesticIPs
@@ -65,7 +70,7 @@ func (e *Engine) SaveProxyMode(mode, exceptions string) error {
 	routingChanged := prevMode != p.ProxyMode || prevDomains != nextDomains
 	var liveRouter *routing.Router
 	if e.proxy != nil {
-		liveRouter, err = buildRouter(p.ProxyMode, e.rules, nextDomains, e.proxy, p.dnsConfig().Enabled)
+		liveRouter, err = buildRouter(p.ProxyMode, e.rules, nextDomains, p.DirectPresets, e.proxy, p.dnsConfig().Enabled)
 		if err != nil {
 			e.mu.Unlock()
 			return err
@@ -84,6 +89,47 @@ func (e *Engine) SaveProxyMode(mode, exceptions string) error {
 		if routingChanged {
 			liveProxy.ResetConnections()
 		}
+		if liveProxy.TUN {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = tunmode.FlushDNS(ctx)
+			}()
+		}
+	}
+	return nil
+}
+
+// SaveDirectPresets 更新用户启用的内置直连规则包（如网易、腾讯），支持连接中热生效。
+func (e *Engine) SaveDirectPresets(ids []string) error {
+	norm, err := routing.NormalizeDirectPresets(ids)
+	if err != nil {
+		return err
+	}
+	e.mu.Lock()
+	if e.connecting || e.recovering || e.stopping > 0 {
+		e.mu.Unlock()
+		return errors.New("正在切换连接状态，请稍后再试")
+	}
+	p := e.preferences
+	p.DirectPresets = norm
+	var liveRouter *routing.Router
+	if e.proxy != nil {
+		liveRouter, err = buildRouter(p.ProxyMode, e.rules, joinLines(p.DirectDomains), norm, e.proxy, p.dnsConfig().Enabled)
+		if err != nil {
+			e.mu.Unlock()
+			return err
+		}
+	}
+	if err = e.savePreferencesLocked(p); err != nil {
+		e.mu.Unlock()
+		return err
+	}
+	liveProxy := e.proxy
+	e.mu.Unlock()
+	if liveProxy != nil && liveRouter != nil {
+		liveProxy.SetRouter(liveRouter)
+		liveProxy.ResetConnections()
 		if liveProxy.TUN {
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -134,7 +180,7 @@ func (e *Engine) SaveDNS(enabled bool, domesticText, remoteText string) error {
 	p.RemoteDNS = remote
 	var liveRouter *routing.Router
 	if e.proxy != nil {
-		liveRouter, err = buildRouter(p.ProxyMode, e.rules, joinLines(p.DirectDomains), e.proxy, enabled)
+		liveRouter, err = buildRouter(p.ProxyMode, e.rules, joinLines(p.DirectDomains), p.DirectPresets, e.proxy, enabled)
 		if err != nil {
 			e.mu.Unlock()
 			return err
@@ -199,7 +245,7 @@ func (e *Engine) UpdateRoutingRules() error {
 	liveProxy := e.proxy
 	var liveRouter *routing.Router
 	if liveProxy != nil {
-		liveRouter, _ = buildRouter(e.preferences.ProxyMode, r, joinLines(e.preferences.DirectDomains), liveProxy, e.preferences.dnsConfig().Enabled)
+		liveRouter, _ = buildRouter(e.preferences.ProxyMode, r, joinLines(e.preferences.DirectDomains), e.preferences.DirectPresets, liveProxy, e.preferences.dnsConfig().Enabled)
 	}
 	e.mu.Unlock()
 	if liveProxy != nil && liveRouter != nil {

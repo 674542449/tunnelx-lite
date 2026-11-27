@@ -18,8 +18,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,6 +39,7 @@ import com.txlite.android.core.EngineStatus
 fun SettingsScreen(
     status: EngineStatus,
     connected: Boolean,
+    onToggleDirectPreset: (String, Boolean) -> Unit,
     onSaveDirectDomains: (String) -> Unit,
     onUpdateRules: () -> Unit,
     onSaveDns: (Boolean, String, String) -> Unit,
@@ -46,6 +49,7 @@ fun SettingsScreen(
     var dnsEnabled by remember { mutableStateOf(true) }
     var domesticDns by remember { mutableStateOf("") }
     var remoteDns by remember { mutableStateOf("") }
+    var expandedPresets by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     LaunchedEffect(status.directDomains, status.dnsOverride, status.domesticDns, status.remoteDns) {
         if (!hydrated) {
@@ -77,8 +81,73 @@ fun SettingsScreen(
         item {
             SettingsCard(
                 title = "直连例外与分流规则",
-                desc = "填写的域名 / IP / CIDR 始终直连（修改后立即生效）",
+                desc = "内置应用直连规则包与自定义例外在绕过大陆和全局模式下均实时生效",
             ) {
+                if (status.availableDirectPresets.isNotEmpty()) {
+                    Text(
+                        text = "内置应用直连规则（自由开关）",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    status.availableDirectPresets.forEach { preset ->
+                        val enabled = preset.id in status.directPresets
+                        val expanded = preset.id in expandedPresets
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                        Text(
+                                            text = "${preset.name}（${preset.domains.size} 条根域）",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                        Text(
+                                            text = preset.description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    Switch(
+                                        checked = enabled,
+                                        onCheckedChange = { onToggleDirectPreset(preset.id, it) },
+                                    )
+                                }
+                                TextButton(
+                                    onClick = {
+                                        expandedPresets = if (expanded) expandedPresets - preset.id else expandedPresets + preset.id
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                                ) {
+                                    Text(
+                                        text = if (expanded) "收起包含的域名规则" else "查看包含的域名规则",
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                }
+                                if (expanded) {
+                                    Text(
+                                        text = preset.domains.joinToString("  ·  "),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    HorizontalDivider()
+                }
                 OutlinedTextField(
                     value = domainsText,
                     onValueChange = { domainsText = it },

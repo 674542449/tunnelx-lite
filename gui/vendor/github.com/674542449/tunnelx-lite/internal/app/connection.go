@@ -257,7 +257,7 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64, externalT
 	if mode == routing.TUN {
 		mode = routing.Global
 	}
-	rules, exceptions, dnsCfg := e.rules, joinLines(e.preferences.DirectDomains), e.preferences.dnsConfig()
+	rules, exceptions, presets, dnsCfg := e.rules, joinLines(e.preferences.DirectDomains), append([]string(nil), e.preferences.DirectPresets...), e.preferences.dnsConfig()
 	e.mu.Unlock()
 	var m *client.Mux
 	var p *client.Proxy
@@ -343,7 +343,7 @@ func (e *Engine) connect(id string, systemProxy bool, recovery uint64, externalT
 			p.SetUplink(0, 0, externalDNS)
 		}
 	}
-	router, err := buildRouter(mode, rules, exceptions, p, dnsCfg.Enabled)
+	router, err := buildRouter(mode, rules, exceptions, presets, p, dnsCfg.Enabled)
 	if err != nil {
 		return err
 	}

@@ -246,6 +246,18 @@ func (s *Service) Call(action string, payload []byte) []byte {
 		}
 		return okJSON(true)
 
+	case "save_direct_presets":
+		var req struct {
+			Presets []string `json:"presets"`
+		}
+		if err := decodePayload(payload, &req); err != nil {
+			return errJSON(err)
+		}
+		if err := eng.SaveDirectPresets(req.Presets); err != nil {
+			return errJSON(err)
+		}
+		return okJSON(true)
+
 	case "save_dns":
 		var req struct {
 			Enabled  bool   `json:"enabled"`

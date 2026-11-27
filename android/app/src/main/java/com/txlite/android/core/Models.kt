@@ -23,8 +23,15 @@ data class RuleMeta(
     val ipPrefixes: Int = 0,
 )
 
+data class DirectPresetItem(
+    val id: String,
+    val name: String,
+    val description: String = "",
+    val domains: List<String> = emptyList(),
+)
+
 data class EngineStatus(
-    val version: String = "v0.6.1",
+    val version: String = "v0.6.2",
     val connected: Boolean = false,
     val connectionState: String = "disconnected",
     val connectionStage: String = "disconnected",
@@ -33,6 +40,8 @@ data class EngineStatus(
     val selectedId: String = "",
     val proxyMode: String = "bypass_cn",
     val directDomains: List<String> = emptyList(),
+    val directPresets: List<String> = emptyList(),
+    val availableDirectPresets: List<DirectPresetItem> = emptyList(),
     val transportPreference: String = "tcp",
     val activeTransport: String = "tcp",
     val dnsOverride: Boolean = true,

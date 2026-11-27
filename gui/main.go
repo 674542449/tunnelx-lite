@@ -89,6 +89,9 @@ func (a *App) SavePreferences(id string) error { return a.engine.SavePreferences
 func (a *App) SaveProxyMode(mode, exceptions string) error {
 	return a.engine.SaveProxyMode(mode, exceptions)
 }
+func (a *App) SaveDirectPresets(presets []string) error {
+	return a.engine.SaveDirectPresets(presets)
+}
 func (a *App) SaveTUN(enabled bool) error { return a.engine.SaveTUN(enabled) }
 func (a *App) SaveDNS(enabled bool, domestic, remote string) error {
 	return a.engine.SaveDNS(enabled, domestic, remote)

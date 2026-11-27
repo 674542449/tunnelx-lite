@@ -40,11 +40,15 @@ func TestClassifyRouteAcrossModesAndExceptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bypass, err := buildRouter(routing.Bypass, rules, "custom-direct.example.org", nil, false)
+	bypass, err := buildRouter(routing.Bypass, rules, "custom-direct.example.org", nil, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	global, err := buildRouter(routing.Global, rules, "custom-direct.example.org", nil, false)
+	global, err := buildRouter(routing.Global, rules, "custom-direct.example.org", nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	globalPresets, err := buildRouter(routing.Global, rules, "", []string{"netease", "tencent"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +77,11 @@ func TestClassifyRouteAcrossModesAndExceptions(t *testing.T) {
 	}
 	if route, _ := classifyRoute(ctx, "custom-direct.example.org", nil, global); route != "direct" {
 		t.Errorf("global exception route = %q, want direct", route)
+	}
+	for _, dom := range []string{"music.163.com", "www.qq.com", "meeting.tencent.com"} {
+		if route, rule := classifyRoute(ctx, dom, nil, globalPresets); route != "direct" || rule != "内置直连规则（网易/腾讯）" {
+			t.Errorf("global preset %s = %q (%q), want direct", dom, route, rule)
+		}
 	}
 }
 

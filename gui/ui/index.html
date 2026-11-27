@@ -26,7 +26,7 @@ try {
       </div>
       <div class="brand-info">
         <strong class="brand-name">txlite</strong>
-        <span class="brand-ver" id="brand-version">v0.6.1</span>
+        <span class="brand-ver" id="brand-version">v0.6.2</span>
       </div>
     </div>
 
@@ -286,12 +286,16 @@ try {
             <div class="card-head">
               <div>
                 <h2>直连例外与分流规则</h2>
-                <p class="card-desc">以下域名或 IP 网段始终直连（绕过大陆与全局模式均生效，修改后立即生效）。</p>
+                <p class="card-desc">内置直连规则包与自定义域名在「绕过大陆」和「全局代理」模式下均直连，开关与保存实时生效。</p>
               </div>
               <button type="button" id="save-exceptions" class="btn btn-accent">保存例外</button>
             </div>
+            <div class="preset-rules-block">
+              <span class="field-label">内置应用直连规则（自由开关，实时生效）</span>
+              <div id="direct-presets-list" class="preset-rules-list"></div>
+            </div>
             <label class="field">
-              <span class="field-label">直连域名 / CIDR / IP（每行一条或逗号分隔）</span>
+              <span class="field-label">自定义直连域名 / CIDR / IP（每行一条或逗号分隔）</span>
               <textarea id="set-domains" rows="5" placeholder="例如：&#10;corp.example.com&#10;*.internal.cn&#10;10.20.0.0/16"></textarea>
             </label>
             <div class="rule-meta-row">

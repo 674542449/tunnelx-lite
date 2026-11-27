@@ -272,11 +272,11 @@ type cached struct {
 	until  time.Time
 }
 type Router struct {
-	Rules, Exceptions *Rules
-	Global            bool // When true, only local/private targets and explicit exceptions go direct.
-	Lookup            func(context.Context, string) ([]netip.Addr, error)
-	mu                sync.Mutex
-	cache             map[string]cached
+	Rules, Exceptions, DirectPresets *Rules
+	Global                           bool // When true, only local/private targets and explicit/preset exceptions go direct.
+	Lookup                           func(context.Context, string) ([]netip.Addr, error)
+	mu                               sync.Mutex
+	cache                            map[string]cached
 }
 
 var (
@@ -341,22 +341,32 @@ func (r *Router) IsLocalOrPrivateDomain(host string) bool {
 	return r.Rules != nil && r.Rules.private.MatchDomain(d)
 }
 
-// HasExceptions reports whether the user configured any custom direct exceptions.
+// HasExceptions reports whether the user configured any custom direct exceptions
+// or enabled any built-in direct preset packs (e.g. NetEase / Tencent).
 func (r *Router) HasExceptions() bool {
-	if r == nil || r.Exceptions == nil {
+	if r == nil {
 		return false
 	}
-	return len(r.Exceptions.exact) > 0 || len(r.Exceptions.suffix) > 0 || len(r.Exceptions.patterns) > 0 || len(r.Exceptions.prefixes) > 0
+	has := func(rs *Rules) bool {
+		return rs != nil && (len(rs.exact) > 0 || len(rs.suffix) > 0 || len(rs.patterns) > 0 || len(rs.prefixes) > 0)
+	}
+	return has(r.Exceptions) || has(r.DirectPresets)
 }
 
-// IsDomesticDomain reports whether host matches geosite:cn with higher
-// specificity than geosite:geolocation-!cn (used for TUN split-horizon DNS).
+// IsDomesticDomain reports whether host matches an enabled domestic direct preset
+// (in any mode) or geosite:cn with higher specificity than geosite:geolocation-!cn.
 func (r *Router) IsDomesticDomain(host string) bool {
-	if r == nil || r.Global || r.Rules == nil {
+	if r == nil {
 		return false
 	}
 	d, e := Domain(host)
 	if e != nil {
+		return false
+	}
+	if r.DirectPresets != nil && r.DirectPresets.MatchDomain(d) {
+		return true
+	}
+	if r.Global || r.Rules == nil {
 		return false
 	}
 	cnDepth := r.Rules.MatchDomainDepth(d)
@@ -370,6 +380,9 @@ func (r *Router) IsDomesticDomain(host string) bool {
 // with specificity greater than or equal to geosite:cn.
 func (r *Router) IsProxyDomain(host string) bool {
 	if r == nil || r.Rules == nil {
+		return false
+	}
+	if d, e := Domain(host); e == nil && r.DirectPresets != nil && r.DirectPresets.MatchDomain(d) {
 		return false
 	}
 	if r.Global {
@@ -410,9 +423,12 @@ func (r *Router) Decide(ctx context.Context, target string) Decision {
 	if e != nil {
 		return proxy
 	}
-	// Priority: local/LAN, user exceptions, GEOSITE private.
+	// Priority: local/LAN, user exceptions, GEOSITE private, enabled direct presets.
 	if IsLocalDomain(host) || r.Exceptions.MatchDomain(host) || (r.Rules != nil && r.Rules.private.MatchDomain(host)) {
 		return Decision{true, target, "domain_direct"}
+	}
+	if r.DirectPresets != nil && r.DirectPresets.MatchDomain(host) {
+		return Decision{true, target, "preset_direct"}
 	}
 	if r.Global || r.Rules == nil {
 		return proxy

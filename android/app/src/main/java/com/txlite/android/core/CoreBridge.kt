@@ -50,8 +50,23 @@ object CoreBridge {
         val d = invoke("status").optJSONObject("data") ?: JSONObject()
         val pref = d.optJSONObject("preferences") ?: JSONObject()
         val rules = d.optJSONObject("routing_rules") ?: JSONObject()
+        val availArr = d.optJSONArray("available_direct_presets")
+        val availPresets = ArrayList<DirectPresetItem>(availArr?.length() ?: 0)
+        if (availArr != null) {
+            for (i in 0 until availArr.length()) {
+                val po = availArr.optJSONObject(i) ?: continue
+                availPresets.add(
+                    DirectPresetItem(
+                        id = po.optString("id"),
+                        name = po.optString("name"),
+                        description = po.optString("description"),
+                        domains = jsonStringList(po.optJSONArray("domains")),
+                    )
+                )
+            }
+        }
         return EngineStatus(
-            version = d.optString("version", "v0.6.1"),
+            version = d.optString("version", "v0.6.2"),
             connected = d.optBoolean("connected", false),
             connectionState = d.optString("connection_state", "disconnected"),
             connectionStage = d.optString("connection_stage", "disconnected"),
@@ -60,6 +75,8 @@ object CoreBridge {
             selectedId = pref.optString("selected_id", ""),
             proxyMode = if (pref.optString("proxy_mode") == "global") "global" else "bypass_cn",
             directDomains = jsonStringList(pref.optJSONArray("direct_domains")),
+            directPresets = jsonStringList(d.optJSONArray("direct_presets") ?: pref.optJSONArray("direct_presets")),
+            availableDirectPresets = availPresets,
             transportPreference = if (d.optString("transport_preference") == "h2") "h2" else "tcp",
             activeTransport = d.optString("transport", d.optString("transport_preference", "tcp")),
             dnsOverride = d.optBoolean("dns_override", true),
@@ -168,6 +185,12 @@ object CoreBridge {
 
     fun saveProxyMode(mode: String, directDomains: String) {
         invoke("save_mode", JSONObject().put("mode", mode).put("direct_domains", directDomains))
+    }
+
+    fun saveDirectPresets(presets: List<String>) {
+        val arr = JSONArray()
+        presets.forEach { arr.put(it) }
+        invoke("save_direct_presets", JSONObject().put("presets", arr))
     }
 
     fun saveDns(enabled: Boolean, domestic: String, remote: String) {

@@ -18,6 +18,7 @@ let activeView = 'nodes';
 let logFilter = 'all';
 let logEntries = [];
 let lastTableSignature = '';
+let lastPresetsSignature = '';
 let settingsHydrated = false;
 let lastSavedDomains = '';
 let checkReport = null;
@@ -240,7 +241,7 @@ function render() {
   const mode = pref.proxy_mode === 'global' ? 'global' : 'bypass_cn';
   const tun = status.tun || {};
 
-  $('brand-version').textContent = status.version || 'v0.6.1';
+  $('brand-version').textContent = status.version || 'v0.6.2';
   $('nav-node-count').textContent = String(servers.length);
   $('header-node-count').textContent = servers.length + ' 个节点';
 
@@ -555,6 +556,65 @@ async function runCustomDomainCheck(raw) {
   }
 }
 
+function renderDirectPresets(disabled) {
+  const host = $('direct-presets-list');
+  if (!host) return;
+  const available = Array.isArray(status.available_direct_presets) ? status.available_direct_presets : [];
+  const enabled = new Set(Array.isArray(status.direct_presets) ? status.direct_presets : []);
+  const sig = JSON.stringify({ disabled, enabled: [...enabled], ids: available.map(p => p.id) });
+  if (sig === lastPresetsSignature) return;
+  lastPresetsSignature = sig;
+
+  // Preserve open <details> state across refreshes
+  const openIds = new Set([...host.querySelectorAll('details[open]')].map(d => d.dataset.presetId));
+  const nodes = available.map(p => {
+    const isOn = enabled.has(p.id);
+    const box = el('div', undefined, 'preset-rule-item');
+    const top = el('div', undefined, 'preset-rule-top');
+    const info = el('div', undefined, 'preset-rule-info');
+    const titleRow = el('div', undefined, 'preset-rule-title-row');
+    titleRow.append(
+      el('span', p.name, 'preset-rule-name'),
+      el('span', (p.domains?.length || 0) + ' 条根域', 'preset-rule-count'),
+    );
+    info.append(titleRow, el('span', p.description || '', 'preset-rule-desc'));
+
+    const sw = el('label', undefined, 'switch');
+    sw.title = (isOn ? '关闭' : '启用') + '「' + p.name + '」';
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = isOn;
+    cb.disabled = disabled;
+    cb.setAttribute('aria-label', p.name);
+    cb.onchange = () => {
+      const next = new Set(Array.isArray(status.direct_presets) ? status.direct_presets : []);
+      if (cb.checked) next.add(p.id);
+      else next.delete(p.id);
+      task((cb.checked ? '启用' : '关闭') + p.name, async () => {
+        await bridge().SaveDirectPresets([...next]);
+        const msg = (cb.checked ? '已启用「' : '已关闭「') + p.name + '」' + (connected() ? '（已即时生效并重置旧连接）' : '');
+        log(msg, 'ok');
+        toast(msg, 'ok');
+      });
+    };
+    const track = el('span', undefined, 'switch-track');
+    track.append(el('span', undefined, 'switch-thumb'));
+    sw.append(cb, track);
+    top.append(info, sw);
+
+    const det = el('details', undefined, 'preset-rule-details');
+    det.dataset.presetId = p.id;
+    if (openIds.has(p.id)) det.open = true;
+    det.append(
+      el('summary', '查看包含的域名规则（匹配全部子域名）'),
+      el('div', (p.domains || []).join('  ·  '), 'preset-rule-domains selectable'),
+    );
+    box.append(top, det);
+    return box;
+  });
+  host.replaceChildren(...nodes);
+}
+
 function hydrateSettings(force) {
   const pref = status.preferences || {};
   const rules = status.routing_rules || {};
@@ -573,6 +633,7 @@ function hydrateSettings(force) {
     settingsHydrated = true;
   }
 
+  renderDirectPresets(busy || going);
   $('set-domains').disabled = busy || going;
   $('save-exceptions').disabled = busy || going;
   $('set-dns-override').disabled = busy || going;

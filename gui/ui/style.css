@@ -1202,3 +1202,82 @@ dialog::backdrop {
 @media (max-width: 860px) {
   .metrics-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Built-in toggleable direct rule packs (NetEase / Tencent) */
+.preset-rules-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.preset-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.preset-rule-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--surface-alt, var(--surface));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.preset-rule-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.preset-rule-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.preset-rule-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.preset-rule-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.preset-rule-count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.preset-rule-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.preset-rule-details {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.preset-rule-details summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--accent);
+  font-weight: 500;
+}
+.preset-rule-domains {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text);
+  word-break: break-word;
+}
