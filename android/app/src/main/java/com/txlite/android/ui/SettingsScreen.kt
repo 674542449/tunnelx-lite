@@ -37,7 +37,6 @@ import com.txlite.android.core.EngineStatus
 fun SettingsScreen(
     status: EngineStatus,
     connected: Boolean,
-    onSaveTransport: (String) -> Unit,
     onSaveDirectDomains: (String) -> Unit,
     onUpdateRules: () -> Unit,
     onSaveDns: (Boolean, String, String) -> Unit,
@@ -67,35 +66,7 @@ fun SettingsScreen(
             Column {
                 Text("代理设置", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(
-                    "配置 TCP 传输协议、直连例外、防污染分流 DNS 与规则更新",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
-        // Transport Card
-        item {
-            SettingsCard(
-                title = "TCP 传输模式",
-                desc = "断开连接后可切换（默认推荐 Vision 零拷贝直连）",
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = status.transportPreference != "h2",
-                        enabled = !connected,
-                        onClick = { onSaveTransport("tcp") },
-                        label = { Text("TCP 直连 + Vision（推荐）") },
-                    )
-                    FilterChip(
-                        selected = status.transportPreference == "h2",
-                        enabled = !connected,
-                        onClick = { onSaveTransport("h2") },
-                        label = { Text("HTTP/2 并发") },
-                    )
-                }
-                Text(
-                    "采用 XTLS Vision 思想：内层 TLS 1.3 建连后剥离外层加密并配合服务端 Linux splice 零拷贝直通，大幅提升下载与高清视频吞吐。",
+                    "配置直连例外、防污染分流 DNS 与规则更新",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

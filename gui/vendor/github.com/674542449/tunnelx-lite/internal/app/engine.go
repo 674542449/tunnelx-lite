@@ -21,7 +21,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/tunmode"
 )
 
-const Version = "v0.6.0"
+const Version = "v0.6.1"
 
 type Settings struct {
 	SOCKS string `json:"socks_listen"`
@@ -52,15 +52,10 @@ func (p Preferences) dnsConfig() client.DNSConfig {
 	}
 }
 
-// ValidTransport accepts the TCP transport choices offered in settings.
-func ValidTransport(t string) bool { return t == "" || t == "tcp" || t == "h2" }
+// ValidTransport accepts only direct TLS 1.3 + Vision ("tcp").
+func ValidTransport(t string) bool { return t == "" || t == "tcp" }
 
-func (p Preferences) transport() string {
-	if p.Transport == "h2" {
-		return "h2"
-	}
-	return "tcp"
-}
+func (p Preferences) transport() string { return "tcp" }
 
 type Health struct {
 	CheckedAt           int64       `json:"checked_at"`
@@ -150,8 +145,8 @@ func New(root string, settings Settings) (*Engine, error) {
 				p.TUNEnabled = true
 				p.ProxyMode = routing.Global
 			}
-			// Migrate removed QUIC/auto preferences cleanly to direct TCP.
-			if p.Transport != "tcp" && p.Transport != "h2" {
+			// Migrate removed QUIC/auto/h2 preferences cleanly to direct TCP + Vision.
+			if p.Transport != "tcp" {
 				p.Transport = "tcp"
 			}
 			e.preferences = p

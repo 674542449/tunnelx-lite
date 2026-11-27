@@ -103,7 +103,6 @@ func TestMobileCoreRPCFlow(t *testing.T) {
 	mustCall(t, &svc, "rename", map[string]string{"id": id, "name": "🇯🇵 东京高速"})
 	mustCall(t, &svc, "save_mode", map[string]string{"mode": "global", "direct_domains": "corp.example.com"})
 	mustCall(t, &svc, "save_dns", map[string]any{"enabled": true, "domestic": "https://223.5.5.5/dns-query", "remote": "1.1.1.1:53"})
-	mustCall(t, &svc, "save_transport", map[string]string{"transport": "h2"})
 	mustCall(t, &svc, "save_transport", map[string]string{"transport": "tcp"})
 
 	st := mustCall(t, &svc, "status", nil)

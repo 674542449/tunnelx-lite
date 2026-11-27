@@ -24,7 +24,7 @@ data class RuleMeta(
 )
 
 data class EngineStatus(
-    val version: String = "v0.6.0",
+    val version: String = "v0.6.1",
     val connected: Boolean = false,
     val connectionState: String = "disconnected",
     val connectionStage: String = "disconnected",

@@ -51,7 +51,7 @@ object CoreBridge {
         val pref = d.optJSONObject("preferences") ?: JSONObject()
         val rules = d.optJSONObject("routing_rules") ?: JSONObject()
         return EngineStatus(
-            version = d.optString("version", "v0.6.0"),
+            version = d.optString("version", "v0.6.1"),
             connected = d.optBoolean("connected", false),
             connectionState = d.optString("connection_state", "disconnected"),
             connectionStage = d.optString("connection_stage", "disconnected"),

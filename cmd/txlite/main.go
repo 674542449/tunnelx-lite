@@ -258,7 +258,10 @@ func menu(d lite.Dir) error {
 			c := exec.Command("bash", "-c", "curl -fsSL https://raw.githubusercontent.com/674542449/tunnelx-lite/main/scripts/install.sh | bash -s -- "+arg)
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 			e = c.Run()
-			if arg == "uninstall" && e == nil {
+			if e == nil {
+				if arg == "update" {
+					fmt.Println("更新已完成，请重新运行 txlite 打开新版管理菜单。")
+				}
 				return nil
 			}
 		case "0", "q":

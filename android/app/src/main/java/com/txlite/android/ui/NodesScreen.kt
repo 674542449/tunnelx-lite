@@ -123,8 +123,7 @@ fun NodesScreen(
                         isConnected && status.activeTransport == "h2" -> "H2"
                         isConnected -> "TCP"
                         activeNode?.protocol == "txpulse" -> "TXPULSE"
-                        status.transportPreference == "h2" -> "H2"
-                        else -> "VISION/TCP"
+                        else -> "VISION"
                     }
                     Text(
                         text = protoText,

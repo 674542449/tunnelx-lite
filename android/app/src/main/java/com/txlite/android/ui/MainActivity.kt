@@ -421,16 +421,6 @@ private fun TxliteRootApp(
                 3 -> SettingsScreen(
                     status = status,
                     connected = vpnEvent.running || vpnEvent.connecting || status.connected,
-                    onSaveTransport = { t ->
-                        scope.launch {
-                            runCatching { withContext(Dispatchers.IO) { CoreBridge.saveTransport(t) } }
-                                .onSuccess {
-                                    refreshState()
-                                    showMessage("传输模式已保存，下次连接生效")
-                                }
-                                .onFailure { showMessage(it.message ?: "保存失败") }
-                        }
-                    },
                     onSaveDirectDomains = { domains ->
                         scope.launch {
                             runCatching { withContext(Dispatchers.IO) { CoreBridge.saveProxyMode(status.proxyMode, domains) } }

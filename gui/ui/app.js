@@ -20,7 +20,6 @@ let logEntries = [];
 let lastTableSignature = '';
 let settingsHydrated = false;
 let lastSavedDomains = '';
-let lastSavedTransport = 'tcp';
 let checkReport = null;
 let customCheckItems = [];
 let checkCat = 'all';
@@ -38,7 +37,6 @@ const stages = {
 };
 
 const modeNames = { bypass_cn: '绕过大陆', global: '全局代理' };
-const transportNames = { tcp: 'TCP 直连 + Vision 零拷贝', h2: 'TCP 多路复用 (H2)' };
 
 function el(tag, text, cls) {
   const e = document.createElement(tag);
@@ -242,7 +240,7 @@ function render() {
   const mode = pref.proxy_mode === 'global' ? 'global' : 'bypass_cn';
   const tun = status.tun || {};
 
-  $('brand-version').textContent = status.version || 'v0.6.0';
+  $('brand-version').textContent = status.version || 'v0.6.1';
   $('nav-node-count').textContent = String(servers.length);
   $('header-node-count').textContent = servers.length + ' 个节点';
 
@@ -267,7 +265,6 @@ function render() {
   $('probe-all').disabled = busy || !servers.length;
 
   // Transport chip
-  const tpref = status.transport_preference === 'h2' ? 'h2' : 'tcp';
   const chip = $('transport-chip');
   if (on) {
     const actual = status.transport === 'txpulse' ? 'txpulse'
@@ -283,17 +280,17 @@ function render() {
       chip.title = actual === 'vision'
         ? '当前使用 TCP 直连 + Vision 零拷贝直通（TLS 1.3 内层直连，无双重加密）'
         : actual === 'tcp'
-        ? '当前使用 TCP 直连多通道（更新服务端至 v0.5.0 可启用 Vision 零拷贝）'
-        : (tpref === 'tcp' ? '服务端为旧版，当前自动兼容 HTTP/2（更新服务端可启用 Vision 极速直连）' : '当前使用 TCP HTTP/2 多路复用');
+        ? '当前使用 TCP 直连多通道（更新服务端可启用 Vision 零拷贝）'
+        : '旧版服务端自动兼容模式（更新服务端可启用 Vision 极速直连）';
     }
   } else if (currentNode && currentNode.protocol === 'txpulse') {
     chip.textContent = 'TXPULSE';
     chip.className = 'transport-chip txpulse';
     chip.title = '所选节点使用 TXPulse 自研类 Hy2 UDP 协议（自签证书指纹固定 + 自适应 HyBBR）';
   } else {
-    chip.textContent = tpref === 'h2' ? 'H2' : 'TCP';
+    chip.textContent = 'VISION';
     chip.className = 'transport-chip';
-    chip.title = '传输模式：' + (transportNames[tpref] || tpref);
+    chip.title = 'TCP 直连 + Vision 零拷贝（TLS 1.3 + ECH）';
   }
 
   // Orthogonal routing mode segmented control (hot-switchable while connected!)
@@ -566,16 +563,13 @@ function hydrateSettings(force) {
   const going = connecting();
 
   const domainsStr = (pref.direct_domains || []).join('\n');
-  const tpref = status.transport_preference === 'h2' ? 'h2' : 'tcp';
 
   if (force || !settingsHydrated) {
     $('set-domains').value = domainsStr;
-    $('set-transport').value = tpref;
     $('set-dns-override').checked = status.dns_override !== false;
     $('set-domestic-dns').value = (status.domestic_dns || []).join('\n');
     $('set-remote-dns').value = (status.remote_dns || []).join('\n');
     lastSavedDomains = domainsStr;
-    lastSavedTransport = tpref;
     settingsHydrated = true;
   }
 
@@ -585,8 +579,6 @@ function hydrateSettings(force) {
   $('set-domestic-dns').disabled = busy || going || !$('set-dns-override').checked;
   $('set-remote-dns').disabled = busy || going;
   $('save-dns').disabled = busy || going;
-  $('set-transport').disabled = busy || on || going;
-  $('save-transport').disabled = busy || on || going;
   $('btn-update-rules').disabled = busy;
   $('btn-recover-proxy').disabled = busy || on || going;
 
@@ -935,17 +927,6 @@ $('save-dns').onclick = () => task('保存 DNS 覆写', async () => {
   const msg = (enabled ? '防污染 DNS 覆写已保存' : '已关闭国内 DNS 覆写') + (connected() ? '并立即生效' : '');
   log(msg, 'ok');
   toast(msg, 'ok');
-});
-
-$('save-transport').onclick = () => task('保存传输设置', async () => {
-  const t = $('set-transport').value === 'h2' ? 'h2' : 'tcp';
-  if (t !== (status.transport_preference || 'tcp')) {
-    await bridge().SaveTransport(t);
-    log('传输方式已改为 ' + transportNames[t] + '，下次连接生效', 'ok');
-  }
-  lastSavedTransport = t;
-  settingsHydrated = false;
-  toast('传输设置已保存', 'ok');
 });
 
 $('btn-update-rules').onclick = () => task('更新分流规则', async () => {

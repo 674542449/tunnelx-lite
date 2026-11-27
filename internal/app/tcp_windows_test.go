@@ -70,68 +70,64 @@ func TestTCPTransportPreferencesAndLegacyMigration(t *testing.T) {
 	defer site.Close()
 	link := tcpTestServer(t, ln.Addr().String())
 
-	for _, transport := range []string{"tcp", "h2"} {
-		e, err := New(t.TempDir(), Settings{SOCKS: freeAddr(t), HTTP: freeAddr(t), Web: freeAddr(t)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, bad := range []string{"quic", "auto", "bogus"} {
-			if err = e.SaveTransport(bad); err == nil {
-				t.Fatalf("invalid transport %q accepted", bad)
-			}
-		}
-		e.Import(link.String())
-		e.SaveProxyMode(routing.Global, "")
-		if err = e.SaveTransport(transport); err != nil {
-			t.Fatal(err)
-		}
-		if err = e.Connect(e.Servers()[0].ID, false); err != nil {
-			t.Fatal(transport, err)
-		}
-		if err = e.SaveTransport("h2"); err == nil {
-			t.Fatal("transport changed while connected")
-		}
-		wantTransport := transport
-		if transport == "tcp" {
-			wantTransport = "vision"
-		}
-		if got := e.Status()["transport"]; got != wantTransport {
-			t.Fatalf("expected active transport %q, got %v", wantTransport, got)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		tun, err := e.mux.OpenTCPFast(ctx, ln.Addr().String())
-		if err != nil {
-			t.Fatal(transport, err)
-		}
-		_, _ = io.WriteString(tun, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
-		res, err := http.ReadResponse(bufio.NewReader(tun), nil)
-		if err != nil {
-			t.Fatal(transport, err)
-		}
-		b, _ := io.ReadAll(res.Body)
-		tun.Close()
-		cancel()
-		if string(b) != "hello over fast tcp" || tun.Transport() != wantTransport {
-			t.Fatalf("%s response or transport mismatch: %q %q", transport, string(b), tun.Transport())
-		}
-		e.Close()
-	}
-
-	// Legacy preferences containing removed QUIC/auto fields must migrate cleanly without warning.
-	root := t.TempDir()
-	stateDir := filepath.Join(root, "state")
-	_ = os.MkdirAll(stateDir, 0700)
-	_ = os.WriteFile(filepath.Join(stateDir, "preferences.json"), []byte(`{"proxy_mode":"bypass_cn","transport":"quic","down_mbps":300}`), 0600)
-	e, err := New(root, Settings{SOCKS: freeAddr(t), HTTP: freeAddr(t), Web: freeAddr(t)})
+	e, err := New(t.TempDir(), Settings{SOCKS: freeAddr(t), HTTP: freeAddr(t), Web: freeAddr(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer e.Close()
-	st := e.Status()
-	if st["startup_warning"] != "" {
-		t.Fatalf("legacy QUIC preferences produced warning: %v", st["startup_warning"])
+	for _, bad := range []string{"h2", "quic", "auto", "bogus"} {
+		if err = e.SaveTransport(bad); err == nil {
+			t.Fatalf("invalid transport %q accepted", bad)
+		}
 	}
-	if st["transport_preference"] != "tcp" {
-		t.Fatalf("legacy QUIC preference did not migrate to tcp: %v", st["transport_preference"])
+	e.Import(link.String())
+	e.SaveProxyMode(routing.Global, "")
+	if err = e.SaveTransport("tcp"); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Connect(e.Servers()[0].ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.SaveTransport("tcp"); err == nil {
+		t.Fatal("transport changed while connected")
+	}
+	if got := e.Status()["transport"]; got != "vision" {
+		t.Fatalf("expected active transport vision, got %v", got)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	tun, err := e.mux.OpenTCPFast(ctx, ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.WriteString(tun, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+	res, err := http.ReadResponse(bufio.NewReader(tun), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(res.Body)
+	tun.Close()
+	cancel()
+	if string(b) != "hello over fast tcp" || tun.Transport() != "vision" {
+		t.Fatalf("response or transport mismatch: %q %q", string(b), tun.Transport())
+	}
+	e.Close()
+
+	// Legacy preferences containing removed h2/QUIC/auto fields must migrate cleanly without warning.
+	for _, legacy := range []string{`{"proxy_mode":"bypass_cn","transport":"quic","down_mbps":300}`, `{"proxy_mode":"bypass_cn","transport":"h2"}`} {
+		root := t.TempDir()
+		stateDir := filepath.Join(root, "state")
+		_ = os.MkdirAll(stateDir, 0700)
+		_ = os.WriteFile(filepath.Join(stateDir, "preferences.json"), []byte(legacy), 0600)
+		e, err := New(root, Settings{SOCKS: freeAddr(t), HTTP: freeAddr(t), Web: freeAddr(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		st := e.Status()
+		e.Close()
+		if st["startup_warning"] != "" {
+			t.Fatalf("legacy preferences %s produced warning: %v", legacy, st["startup_warning"])
+		}
+		if st["transport_preference"] != "tcp" {
+			t.Fatalf("legacy preference %s did not migrate to tcp: %v", legacy, st["transport_preference"])
+		}
 	}
 }
