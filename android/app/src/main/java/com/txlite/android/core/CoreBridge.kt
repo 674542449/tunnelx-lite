@@ -51,7 +51,7 @@ object CoreBridge {
         val pref = d.optJSONObject("preferences") ?: JSONObject()
         val rules = d.optJSONObject("routing_rules") ?: JSONObject()
         return EngineStatus(
-            version = d.optString("version", "v0.5.4"),
+            version = d.optString("version", "v0.6.0"),
             connected = d.optBoolean("connected", false),
             connectionState = d.optString("connection_state", "disconnected"),
             connectionStage = d.optString("connection_stage", "disconnected"),
@@ -91,6 +91,8 @@ object CoreBridge {
                     host = o.optString("host"),
                     port = o.optInt("port"),
                     family = o.optString("family"),
+                    protocol = o.optString("protocol", "txlite"),
+                    hop = o.optString("hop", ""),
                 )
             )
         }
@@ -137,6 +139,10 @@ object CoreBridge {
         val dnsArr = JSONArray()
         dnsServers.forEach { dnsArr.put(it) }
         runCatching { invoke("update_dns", JSONObject().put("dns_servers", dnsArr)) }
+    }
+
+    fun migrateNetwork() {
+        runCatching { invoke("migrate_network") }
     }
 
     fun probe(id: String): Long {

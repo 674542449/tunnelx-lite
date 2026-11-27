@@ -13,6 +13,7 @@ github.com/674542449/tunnelx-lite/internal/config
 github.com/674542449/tunnelx-lite/internal/diagnostics
 github.com/674542449/tunnelx-lite/internal/fsutil
 github.com/674542449/tunnelx-lite/internal/processowner
+github.com/674542449/tunnelx-lite/internal/pulse
 github.com/674542449/tunnelx-lite/internal/routing
 github.com/674542449/tunnelx-lite/internal/share
 github.com/674542449/tunnelx-lite/internal/systemproxy

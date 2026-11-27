@@ -21,7 +21,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/tunmode"
 )
 
-const Version = "v0.5.4"
+const Version = "v0.6.0"
 
 type Settings struct {
 	SOCKS string `json:"socks_listen"`
@@ -250,6 +250,9 @@ func (e *Engine) Status() map[string]any {
 		s["connected_at"] = e.connectedAt.Unix()
 		s["ech"] = e.mux.LastECH.Load()
 		s["transport"] = e.mux.ActiveTransport()
+		if e.mux.IsPulse() {
+			s["pulse_stats"] = e.mux.PulseStats()
+		}
 		s["logging"] = e.mux.LoggingStatus()
 	}
 	return s

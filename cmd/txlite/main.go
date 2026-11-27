@@ -25,6 +25,8 @@ func main() {
 	dir := flag.String("dir", "/var/lib/txlite", "state directory")
 	name := flag.String("name", "", "server name for share links (init)")
 	port := flag.Int("port", 0, "proxy TCP port (init; 0 picks a random port)")
+	pulsePort := flag.Int("pulse-port", 0, "TXPulse UDP port (init; 0 picks a random port)")
+	pulseHop := flag.String("pulse-hop", "", "TXPulse optional UDP port hopping range, e.g. 20000-20031")
 	panelPort := flag.Int("panel-port", 0, "panel HTTPS port (init; 0 picks a random port)")
 	inbound := flag.String("inbound", "", "init: inbound family: empty (dual stack), ipv4 or ipv6")
 	outbound := flag.String("outbound", "ipv4", "init: outbound egress policy (fixed to ipv4)")
@@ -38,7 +40,7 @@ func main() {
 	case "":
 		err = menu(d)
 	case "init":
-		err = initialize(d, *name, *port, *panelPort, *inbound, *outbound)
+		err = initialize(d, *name, *port, *pulsePort, *pulseHop, *panelPort, *inbound, *outbound)
 	case "run":
 		err = run(d)
 	case "link":
@@ -74,10 +76,14 @@ func randomPort(avoid int) int {
 	return 20000 + int(time.Now().UnixNano()%30000)
 }
 
-func initialize(d lite.Dir, name string, port, panelPort int, inbound, outbound string) error {
+func initialize(d lite.Dir, name string, port, pulsePort int, pulseHop string, panelPort int, inbound, outbound string) error {
 	// Inbound may be dual-stack / ipv4 / ipv6; outbound egress is always IPv4-only.
 	outbound = "ipv4"
-	probe := lite.Config{Name: "x", Port: 1, PanelPort: 2, PanelPath: "abcdefghij", Token: lite.NewToken(), Inbound: inbound, OutboundIP: outbound}
+	hopStart, hopEnd, err := lite.ParseHopRange(pulseHop)
+	if err != nil {
+		return err
+	}
+	probe := lite.Config{Name: "x", Port: 1, PulsePort: pulsePort, PulseHopStart: hopStart, PulseHopEnd: hopEnd, PanelPort: 2, PanelPath: "abcdefghij", Token: lite.NewToken(), Inbound: inbound, OutboundIP: outbound}
 	if err := probe.Validate(); err != nil {
 		return err
 	}
@@ -95,7 +101,7 @@ func initialize(d lite.Dir, name string, port, panelPort int, inbound, outbound 
 	if panelPort == 0 {
 		panelPort = randomPort(port)
 	}
-	c, password, err := lite.Init(d, name, port, panelPort)
+	c, password, err := lite.InitFull(d, name, port, pulsePort, panelPort, hopStart, hopEnd)
 	if err != nil {
 		return err
 	}
@@ -105,7 +111,7 @@ func initialize(d lite.Dir, name string, port, panelPort int, inbound, outbound 
 			return err
 		}
 	}
-	fmt.Println("初始化完成。")
+	fmt.Println("初始化完成（已自动配置 TCP Vision 与 TXPulse 自签证书 UDP 双协议）。")
 	fmt.Printf("面板密码：%s\n（只显示这一次；忘记后运行 txlite password 重置）\n", password)
 	return nil
 }
@@ -160,11 +166,19 @@ func printInfo(d lite.Dir) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	v4, v6 := lite.PublicIPs(ctx)
-	fmt.Printf("名称：%s\n代理端口：%d/TCP\n面板端口：%d/TCP\n", c.Name, c.Port, c.PanelPort)
+	fmt.Printf("名称：%s\nTCP 代理端口：%d/TCP（Vision / H2）\n", c.Name, c.Port)
+	if c.PulsePort > 0 {
+		if hop := c.HopRangeString(); hop != "" {
+			fmt.Printf("UDP 代理端口：%d/UDP（TXPulse 自签证书，端口跳跃 %s/UDP）\n", c.PulsePort, hop)
+		} else {
+			fmt.Printf("UDP 代理端口：%d/UDP（TXPulse 自签证书，单端口）\n", c.PulsePort)
+		}
+	}
+	fmt.Printf("面板端口：%d/TCP\n", c.PanelPort)
 	for _, u := range panelURLs(c, v4, v6) {
 		fmt.Println("面板地址：" + u)
 	}
-	fmt.Println("（面板使用自签证书，浏览器提示不安全时选择继续访问）")
+	fmt.Println("（面板与 TXPulse 均使用自签证书；浏览器访问面板提示不安全时选择继续访问，客户端按公钥指纹自动校验）")
 	return printLinks(d)
 }
 

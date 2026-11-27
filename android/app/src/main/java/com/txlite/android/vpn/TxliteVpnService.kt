@@ -275,7 +275,17 @@ class TxliteVpnService : VpnService() {
     private fun registerNetworkWatcher() {
         unregisterNetworkWatcher()
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        var lastNetHandle: Long? = null
         val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val handle = network.networkHandle
+                if (lastNetHandle != null && lastNetHandle != handle) {
+                    // Wi-Fi <-> 5G 切换时主动触发 TXPulse 无缝连接迁移
+                    CoreBridge.migrateNetwork()
+                }
+                lastNetHandle = handle
+            }
+
             override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
                 val dns = extractDns(linkProperties)
                 if (dns.isNotEmpty()) {

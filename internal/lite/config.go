@@ -17,13 +17,18 @@ import (
 	"unicode/utf8"
 
 	"github.com/674542449/tunnelx-lite/internal/config"
+	"github.com/674542449/tunnelx-lite/internal/pulse"
 )
 
-const Version = "v0.5.4"
+const Version = "v0.6.0"
 
 type Config struct {
 	Name           string   `json:"name"`
 	Port           int      `json:"port"`
+	PulsePort      int      `json:"pulse_port,omitempty"`
+	PulseObfs      string   `json:"pulse_obfs,omitempty"`
+	PulseHopStart  int      `json:"pulse_hop_start,omitempty"`
+	PulseHopEnd    int      `json:"pulse_hop_end,omitempty"`
 	PanelPort      int      `json:"panel_port"`
 	PanelPath      string   `json:"panel_path"`
 	PanelHash      string   `json:"panel_password_hash"`
@@ -38,13 +43,15 @@ type Config struct {
 	NoQUIC bool `json:"no_quic,omitempty"`
 }
 
-// Dir holds config.json, the certificate, the ECH key and traffic counters.
+// Dir holds config.json, certificates, the ECH key and traffic counters.
 type Dir string
 
 func (d Dir) path(name string) string { return filepath.Join(string(d), name) }
 func (d Dir) Config() string          { return d.path("config.json") }
 func (d Dir) Cert() string            { return d.path("cert.pem") }
 func (d Dir) Key() string             { return d.path("key.pem") }
+func (d Dir) PulseCert() string       { return d.path("pulse-cert.pem") }
+func (d Dir) PulseKey() string        { return d.path("pulse-key.pem") }
 func (d Dir) ECH() string             { return d.path("ech.json") }
 func (d Dir) Traffic() string         { return d.path("traffic.json") }
 
@@ -55,6 +62,17 @@ func (c *Config) Validate() error {
 	}
 	if c.Port < 1 || c.Port > 65535 || c.PanelPort < 1 || c.PanelPort > 65535 || c.Port == c.PanelPort {
 		return errors.New("代理端口和面板端口需在 1–65535 之间且互不相同")
+	}
+	if c.PulsePort != 0 && (c.PulsePort < 1 || c.PulsePort > 65535) {
+		return errors.New("TXPulse UDP 端口需在 1–65535 之间")
+	}
+	if c.PulseObfs != "" && !pulse.ValidObfsKey(c.PulseObfs) {
+		return errors.New("TXPulse 混淆种子无效")
+	}
+	if c.PulseHopStart != 0 || c.PulseHopEnd != 0 {
+		if c.PulseHopStart < 1 || c.PulseHopEnd > 65535 || c.PulseHopEnd <= c.PulseHopStart || c.PulseHopEnd-c.PulseHopStart+1 > 128 {
+			return errors.New("TXPulse 端口跳跃范围无效（需为 2–128 个连续有效端口）")
+		}
 	}
 	if len(c.PanelPath) < 8 || strings.ContainsAny(c.PanelPath, "/?#% ") {
 		return errors.New("面板路径无效")
@@ -91,6 +109,31 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// ParseHopRange 解析类似 "20000-20031" 的端口跳跃区间；空字符串返回 0, 0, nil。
+func ParseHopRange(raw string) (int, int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, 0, nil
+	}
+	a, b, ok := strings.Cut(raw, "-")
+	if !ok {
+		return 0, 0, errors.New("端口跳跃格式需为 起始端口-结束端口，例如 20000-20031")
+	}
+	s, e1 := strconv.Atoi(strings.TrimSpace(a))
+	e, e2 := strconv.Atoi(strings.TrimSpace(b))
+	if e1 != nil || e2 != nil || s < 1 || e > 65535 || e <= s || e-s+1 > 128 {
+		return 0, 0, errors.New("端口跳跃范围需为 2–128 个有效端口（1–65535）")
+	}
+	return s, e, nil
+}
+
+func (c Config) HopRangeString() string {
+	if c.PulseHopStart > 0 && c.PulseHopEnd > c.PulseHopStart {
+		return strconv.Itoa(c.PulseHopStart) + "-" + strconv.Itoa(c.PulseHopEnd)
+	}
+	return ""
+}
+
 func Load(d Dir) (Config, error) {
 	var c Config
 	if e := config.Read(d.Config(), &c); e != nil {
@@ -113,7 +156,31 @@ func Save(d Dir, c Config) error {
 
 // Server builds the kernel server configuration from the owner settings.
 func (c Config) Server(d Dir) config.Server {
-	return config.Server{Listen: ":" + strconv.Itoa(c.Port), CertFile: d.Cert(), KeyFile: d.Key(), ECHKeyFile: d.ECH(), InnerName: c.InnerName, InnerCertFile: d.Cert(), InnerKeyFile: d.Key(), Tokens: []string{c.Token}, Network: map[string]string{"ipv4": "tcp4", "ipv6": "tcp6"}[c.Inbound], OutboundIP: "ipv4", BandwidthLimit: c.BandwidthLimit, MaxConnections: 2048, DNSCacheTTL: 300}
+	pulseListen := ""
+	if c.PulsePort > 0 {
+		pulseListen = ":" + strconv.Itoa(c.PulsePort)
+	}
+	return config.Server{
+		Listen:         ":" + strconv.Itoa(c.Port),
+		CertFile:       d.Cert(),
+		KeyFile:        d.Key(),
+		ECHKeyFile:     d.ECH(),
+		InnerName:      c.InnerName,
+		InnerCertFile:  d.Cert(),
+		InnerKeyFile:   d.Key(),
+		PulseListen:    pulseListen,
+		PulseCertFile:  d.PulseCert(),
+		PulseKeyFile:   d.PulseKey(),
+		PulseObfs:      c.PulseObfs,
+		PulseHopStart:  c.PulseHopStart,
+		PulseHopEnd:    c.PulseHopEnd,
+		Tokens:         []string{c.Token},
+		Network:        map[string]string{"ipv4": "tcp4", "ipv6": "tcp6"}[c.Inbound],
+		OutboundIP:     "ipv4",
+		BandwidthLimit: c.BandwidthLimit,
+		MaxConnections: 2048,
+		DNSCacheTTL:    300,
+	}
 }
 
 func randomToken(n int) string {

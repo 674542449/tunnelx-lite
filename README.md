@@ -2,9 +2,15 @@
 
 一个可以单独使用的代理服务：服务器一键安装，复制分享链接，粘贴进 Windows 客户端就能用。没有账号、没有订阅后台。
 
-- **协议**：纯 TCP（TLS 1.3 + ECH 加密 SNI），客户端按证书公钥指纹校验服务器，不需要域名。默认使用 **TCP 直连 + Vision 零拷贝直通**（参考 VLESS Reality Vision 原理：每条连接独立 TLS 1.3 TCP 通道 + 预热连接池 + 首包合并，握手阶段随机填充消除 TLS 套 TLS 特征，内层 TLS 1.3 建连后自动剥离外层加密并启用 Linux 内核 `splice(2)` 零拷贝直通，非 TLS 1.3 流量自动保持外层加密），同时兼容旧版服务端自动回退。
-- **服务端**：Ubuntu / Debian，入站可选双栈 / 仅 IPv4 / 仅 IPv6，出站可选自动、IPv4 优先、IPv6 优先、仅 IPv4、仅 IPv6；自带 HTTPS 管理面板和 `txlite` 命令行菜单；安装/更新时自动开启 BBR + fq 与 32 MB TCP 缓冲调优。
-- **客户端**：Windows 图形界面（默认以管理员权限启动，可直接启用 TUN 无需重启），支持绕过大陆、全局代理、TUN 模式与防污染 DNS 覆写。
+- **双协议同机自动部署**：
+  1. **TCP Vision（`txlite://`）**：纯 TCP（TLS 1.3 + ECH 加密 SNI），自签证书公钥指纹固定，无需域名；默认采用 **TCP 直连 + Vision 零拷贝直通**（握手随机填充消除 TLS 套 TLS 特征，内层 TLS 1.3 建连后剥离外层加密并启用 Linux `splice(2)` 零拷贝）。
+  2. **TXPulse（`txpulse://`）**：借鉴 Hysteria 2 优缺点全新纯 Go 重写的自研抗丢包 UDP 协议（零 `quic-go` 依赖）：
+     - 独立 20 年**自签 ECDSA P-256 证书 + 公钥指纹固定（`CertPin`）+ X25519 前向保密**，无需域名且彻底杜绝 `insecure=1` 中间人风险；
+     - 彻底脱离 QUIC / HTTP/3 与 `233` 特征，结构化伪装前缀 + 每包独立掩码头 + 动态长度填充 + 防重放时间窗，未授权主动探测静默丢弃（0 字节响应）；
+     - 自研自适应 **HyBBR** 拥塞控制（免填带宽区分随机丢包与真实拥塞，杜绝原版 Brutal 盲目发包导致的 Bufferbloat 与运营商封杀）；
+     - 单连接独立多流复用（按流 SACK / 快速重传 / 流控，无队头阻塞）、原生 UDP 自动分片重组、移动网络无缝连接迁移与可选原生无 iptables UDP 端口跳跃。
+- **服务端**：Ubuntu / Debian，**入口可选双栈 / 仅 IPv4 / 仅 IPv6，出站落地固定仅 IPv4**；自带 HTTPS 管理面板和 `txlite` 命令行菜单；安装/更新时自动开启 BBR + fq 与 32 MB 网络缓冲调优。
+- **客户端**：Windows 图形界面 + Android 原生免 Root 客户端（~7 MB 精简包），支持绕过大陆、全局代理、TUN 模式、防污染 DNS 覆写与常见网站分流 IP 检查。
 
 ## 服务端安装
 
@@ -17,14 +23,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/674542449/tunnelx-lite/main/
 安装完成后会打印：
 
 - 面板地址（`https://服务器IP:面板端口/随机路径/`）和面板密码
-- IPv4 / IPv6 分享链接（`txlite://…`）
+- IPv4 / IPv6 分享链接（同时生成 `txlite://…` TCP Vision 与 `txpulse://…` 自研类 Hy2 UDP 链接）
 
-云服务器请在安全组放行代理端口的 **TCP** 以及面板端口的 **TCP**（无需放行 UDP）。
+云服务器请在安全组放行代理端口的 **TCP**（Vision）、**UDP**（TXPulse，以及可选端口跳跃段）和面板端口的 **TCP**。
 
-端口默认随机。想指定端口：
+端口默认随机。想指定端口或开启 UDP 端口跳跃：
 
 ```bash
-PORT=443 PANEL_PORT=8443 bash <(curl -fsSL https://raw.githubusercontent.com/674542449/tunnelx-lite/main/scripts/install.sh)
+PORT=443 PULSE_PORT=8444 PULSE_HOP=20000-20031 PANEL_PORT=8443 bash <(curl -fsSL https://raw.githubusercontent.com/674542449/tunnelx-lite/main/scripts/install.sh)
 ```
 
 入站 / 出站的 IP 版本也可以在安装时指定（之后也能在面板「设置」里改）：
@@ -81,11 +87,14 @@ INBOUND=ipv6 OUTBOUND=ipv6 bash <(curl -fsSL https://raw.githubusercontent.com/6
 
 ```
 txlite://密钥@地址:端口?sni=内层名称&ech=ECH配置&pin=证书指纹#名称
+txpulse://密钥@地址:UDP端口?obfs=混淆种子&pin=自签证书指纹[&hop=起始-结束]#名称
 ```
 
 - `地址`：IPv4、`[IPv6]` 或域名（域名由客户端在连接时解析）
-- `ech`：ECHConfigList，base64url 编码
-- `pin`：服务器证书公钥 SHA-256，base64url 编码；客户端只信任这个指纹
+- `ech`：ECHConfigList，base64url 编码（`txlite://` 使用）
+- `obfs`：TXPulse 每节点独立混淆种子，base64url 编码（`txpulse://` 使用）
+- `hop`：可选原生 UDP 端口跳跃区间，如 `20000-20031`（`txpulse://` 使用）
+- `pin`：服务器自签证书公钥 SHA-256 指纹，base64url 编码；客户端只信任这个指纹（杜绝 `insecure=1` 中间人攻击）
 
 分享链接里包含密钥，等同于账号密码，请只发给信任的人。泄露后在面板「重置密钥」即可让旧链接失效。
 

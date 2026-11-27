@@ -108,15 +108,43 @@ func (e *Engine) clientConfig(ctx context.Context, link share.Link) (config.Clie
 	e.mu.Lock()
 	c := link.Client(ip)
 	c.SOCKSListen, c.HTTPListen, c.WebListen, c.DeviceID = e.settings.SOCKS, e.settings.HTTP, e.settings.Web, e.deviceID
-	c.Transport = e.preferences.transport()
+	if !link.IsPulse() {
+		c.Transport = e.preferences.transport()
+	}
 	e.mu.Unlock()
 	return c, nil
 }
 
-// verifyGateway proves TLS, the pinned certificate, ECH and the key in one go.
-// An authenticated request for a forbidden loopback target is refused by the
-// server with its protocol header; a wrong key only ever sees the decoy site.
+// verifyGateway proves identity, self-signed certificate pinning and key authentication.
+// For TXPulse (UDP), it performs a 1-RTT X25519 + ECDSA self-signed cert pin handshake
+// and verifies the server's data plane & private-target guard.
 func verifyGateway(ctx context.Context, m *client.Mux) error {
+	if m.IsPulse() {
+		probe, stop := context.WithTimeout(ctx, 12*time.Second)
+		err := m.EnsurePulseSession(probe)
+		stop()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil {
+			return errors.New("无法建立 TXPulse UDP 安全连接：请确认云服务器安全组已放行 UDP 端口，或重新复制最新分享链接（" + err.Error() + "）")
+		}
+		admit, stopAdmit := context.WithTimeout(ctx, 8*time.Second)
+		defer stopAdmit()
+		t, err := m.OpenTCP(admit, "127.0.0.1:9")
+		if err == nil {
+			t.Close()
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var rejected *client.RequestError
+		if errors.As(err, &rejected) && rejected.Known {
+			return nil
+		}
+		return errors.New("TXPulse 通道验证超时，请检查 UDP 端口连通性")
+	}
 	probe, stop := context.WithTimeout(ctx, 15*time.Second)
 	defer stop()
 	res, err := m.PublicGET(probe)
@@ -178,6 +206,21 @@ func (e *Engine) UpdateExternalDNS(dnsServers []string) {
 	e.mu.Unlock()
 	if liveProxy != nil && liveProxy.ExternalTUN {
 		liveProxy.SetUplink(0, 0, dnsServers)
+	}
+}
+
+// MigrateNetwork notifies an active TXPulse UDP session to migrate its socket
+// seamlessly when the mobile device switches between Wi-Fi and cellular networks.
+func (e *Engine) MigrateNetwork() {
+	e.mu.Lock()
+	m := e.mux
+	e.mu.Unlock()
+	if m != nil && m.IsPulse() {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = m.MigratePulse(ctx)
+		}()
 	}
 }
 
@@ -473,6 +516,13 @@ func (e *Engine) Probe(id string) (int64, error) {
 	if tun != nil {
 		uplink := tun.Uplink()
 		m.SetUplinkInterface(uplink.IfIndexV4, uplink.IfIndexV6)
+	}
+	if m.IsPulse() {
+		rtt, err := m.ProbePulse(ctx)
+		if err != nil {
+			return 0, errors.New("UDP 超时或校验失败")
+		}
+		return max(1, rtt.Milliseconds()), nil
 	}
 	started := time.Now()
 	r, err := m.PublicGET(ctx)

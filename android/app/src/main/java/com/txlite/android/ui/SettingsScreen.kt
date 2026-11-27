@@ -213,7 +213,7 @@ fun SettingsScreen(
                 desc = "内核与桌面版同源，免 Root 整机接管",
             ) {
                 Text("版本：${status.version} (arm64-v8a)", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                Text("网络架构：入口支持 IPv4 / IPv6，落地仅限 IPv4；TLS 1.3 + ECH + XTLS Vision + hev-socks5-tunnel (lwIP)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("网络架构：入口支持 IPv4 / IPv6，落地仅限 IPv4；双协议支持 TCP Vision (TLS 1.3 + ECH) 与自研 TXPulse UDP (自签证书指纹固定 + 自适应 HyBBR + 原生端口跳跃)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

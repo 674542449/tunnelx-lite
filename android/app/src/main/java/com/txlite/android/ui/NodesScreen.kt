@@ -118,9 +118,11 @@ fun NodesScreen(
                     color = if (isConnected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                 ) {
                     val protoText = when {
+                        isConnected && status.activeTransport == "txpulse" -> "TXPULSE"
                         isConnected && status.activeTransport == "vision" -> "VISION"
                         isConnected && status.activeTransport == "h2" -> "H2"
                         isConnected -> "TCP"
+                        activeNode?.protocol == "txpulse" -> "TXPULSE"
                         status.transportPreference == "h2" -> "H2"
                         else -> "VISION/TCP"
                     }
@@ -354,7 +356,7 @@ fun NodesScreen(
                     ) {
                         Text("还没有导入服务器", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text(
-                            "点击上方「扫码」扫描服务端面板二维码，或复制 txlite:// 分享链接后点「剪贴板」即可一键导入。",
+                            "点击上方「扫码」扫描服务端面板二维码，或复制 txlite:// / txpulse:// 分享链接后点「剪贴板」即可一键导入。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -419,6 +421,19 @@ fun NodesScreen(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false),
                                 )
+                                val isPulse = srv.protocol == "txpulse"
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (isPulse) Color(0x26F59E0B) else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                                ) {
+                                    Text(
+                                        text = if (isPulse) (if (srv.hop.isNotEmpty()) "TXPulse·跳跃" else "TXPulse") else "Vision",
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isPulse) Color(0xFFD97706) else MaterialTheme.colorScheme.primary,
+                                    )
+                                }
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
                                     color = MaterialTheme.colorScheme.surfaceVariant,
@@ -496,7 +511,7 @@ fun NodesScreen(
                 OutlinedTextField(
                     value = manualText,
                     onValueChange = { manualText = it },
-                    label = { Text("txlite:// 分享链接（可多行）") },
+                    label = { Text("txlite:// 或 txpulse:// 分享链接（可多行）") },
                     minLines = 3,
                     maxLines = 6,
                     modifier = Modifier.fillMaxWidth(),

@@ -12,6 +12,7 @@ import (
 
 	"github.com/674542449/tunnelx-lite/internal/config"
 	"github.com/674542449/tunnelx-lite/internal/pki"
+	"github.com/674542449/tunnelx-lite/internal/pulse"
 	"github.com/674542449/tunnelx-lite/internal/share"
 )
 
@@ -113,6 +114,47 @@ func TestMobileCoreRPCFlow(t *testing.T) {
 	sh := mustCall(t, &svc, "share_link", map[string]string{"id": id})
 	if sh["link"] == "" {
 		t.Fatal("empty share link")
+	}
+
+	// Import TXPulse link alongside existing server (same host/port allowed with distinct protocol).
+	certPEM, _, err := pki.SelfSigned([]string{"pulse-mobile.local"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blk, _ := pem.Decode(certPEM)
+	pCert, _ := x509.ParseCertificate(blk.Bytes)
+	tok := make([]byte, 32)
+	_, _ = rand.Read(tok)
+	pLink := share.Link{
+		Protocol: share.PulseScheme,
+		Name:     "🚀 新加坡 TXPulse",
+		Host:     "203.0.113.10",
+		Port:     28443,
+		Token:    base64.RawURLEncoding.EncodeToString(tok),
+		CertPin:  config.CertPin(pCert),
+		ObfsKey:  pulse.GenerateObfsKey(),
+		HopStart: 29000,
+		HopEnd:   29031,
+	}
+	impP := mustCall(t, &svc, "import", map[string]string{"text": pLink.String()})
+	if int(impP["added"].(float64)) != 1 {
+		t.Fatalf("expected txpulse added=1, got %v", impP)
+	}
+	rawServers2 := svc.Call("servers", nil)
+	var srvResp2 struct {
+		OK   bool `json:"ok"`
+		Data []struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			Protocol string `json:"protocol"`
+			Hop      string `json:"hop"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rawServers2, &srvResp2); err != nil || !srvResp2.OK || len(srvResp2.Data) != 2 {
+		t.Fatalf("servers after txpulse import failed: %s", string(rawServers2))
+	}
+	if srvResp2.Data[1].Protocol != "txpulse" || srvResp2.Data[1].Hop != "29000-29031" {
+		t.Fatalf("unexpected txpulse server view: %+v", srvResp2.Data[1])
 	}
 
 	mustCall(t, &svc, "remove", map[string]string{"id": id})

@@ -338,7 +338,25 @@ button, input, select, textarea { font: inherit; color: var(--text); }
   flex-shrink: 0;
 }
 .transport-chip.vision, .transport-chip.tcp { color: var(--good); border-color: var(--good-soft); background: var(--good-soft); }
+.transport-chip.txpulse { color: #b45309; border-color: rgba(245, 158, 11, 0.28); background: rgba(245, 158, 11, 0.14); }
+@media (prefers-color-scheme: dark) {
+  .transport-chip.txpulse { color: #fbbf24; border-color: rgba(251, 191, 36, 0.3); background: rgba(251, 191, 36, 0.14); }
+}
 .transport-chip.h2 { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+.proto-pill {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 5px;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+.proto-pill.txpulse { color: #b45309; background: rgba(245, 158, 11, 0.14); }
+.proto-pill.txlite { color: var(--accent); background: var(--accent-soft); }
+@media (prefers-color-scheme: dark) {
+  .proto-pill.txpulse { color: #fbbf24; background: rgba(251, 191, 36, 0.16); }
+}
 
 .active-node-name {
   font-size: 12.5px;

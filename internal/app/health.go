@@ -12,6 +12,15 @@ import (
 )
 
 func probeHealth(ctx context.Context, m *client.Mux) string {
+	if m.IsPulse() {
+		if _, err := m.ProbePulse(ctx); err != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return "timeout"
+			}
+			return "network_or_tls"
+		}
+		return ""
+	}
 	r, err := m.PublicGET(ctx)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {

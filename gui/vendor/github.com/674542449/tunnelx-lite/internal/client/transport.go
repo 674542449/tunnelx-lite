@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/674542449/tunnelx-lite/internal/config"
 	"github.com/674542449/tunnelx-lite/internal/diagnostics"
+	"github.com/674542449/tunnelx-lite/internal/pulse"
 	"github.com/674542449/tunnelx-lite/internal/wire"
 	"golang.org/x/net/http2"
 	"io"
@@ -33,6 +34,8 @@ type Stats struct {
 	H2Dials       atomic.Int64
 	H2Retired     atomic.Int64
 	H2Retries     atomic.Int64
+	PulseStreams  atomic.Int64
+	PulseDials    atomic.Int64
 }
 type Mux struct {
 	Config            config.Client
@@ -41,6 +44,8 @@ type Mux struct {
 	h2Mu              sync.Mutex
 	h2Pool            []*h2Carrier
 	h2Cursor          uint64
+	pulseMu           sync.Mutex
+	pulse             *pulse.Client
 	closed            bool
 	Stats             Stats
 	LastECH           atomic.Bool
@@ -92,6 +97,9 @@ func (m *Mux) authority() string {
 	return net.JoinHostPort(m.Config.ServerName, strconv.Itoa(m.Config.Port))
 }
 func (m *Mux) Mode() string {
+	if m.IsPulse() {
+		return "txpulse"
+	}
 	if m.Config.Transport == "tcp" {
 		return "tcp"
 	}
@@ -468,6 +476,16 @@ func (m *Mux) OpenTCP(ctx context.Context, target string) (*Tunnel, error) {
 	if _, p, e := net.SplitHostPort(target); e != nil || p == "" {
 		return nil, errors.New("invalid target")
 	}
+	if m.IsPulse() {
+		t, e := m.openPulseTCP(ctx, target, true)
+		if e != nil {
+			fields := errorFields(e)
+			fields["stage"] = "open_tcp"
+			m.event(ctx, "connection_open_failed", fields)
+			flowFrom(ctx).failure("open_tcp", e)
+		}
+		return t, e
+	}
 	if m.wantsDirectTCP() {
 		t, e := m.openDirectTCP(ctx, target)
 		if !errors.Is(e, errDirectUnsupported) {
@@ -495,7 +513,18 @@ func (m *Mux) OpenTCP(ctx context.Context, target string) (*Tunnel, error) {
 	}
 	return t, e
 }
-func (m *Mux) OpenUDP(ctx context.Context, target string) (*wire.PacketStream, error) {
+func (m *Mux) OpenUDP(ctx context.Context, target string) (PacketTransport, error) {
+	if m.IsPulse() {
+		u, e := m.openPulseUDP(ctx, target)
+		if e != nil {
+			fields := errorFields(e)
+			fields["stage"] = "open_udp"
+			m.event(ctx, "connection_open_failed", fields)
+			flowFrom(ctx).failure("open_udp", e)
+			return nil, e
+		}
+		return u, nil
+	}
 	t, e := m.open(ctx, target, true)
 	if e != nil {
 		fields := errorFields(e)
@@ -511,6 +540,7 @@ func (m *Mux) Close() error {
 	m.mu.Lock()
 	m.closed = true
 	m.mu.Unlock()
+	m.closePulse()
 	m.closeDirectPool()
 	m.h2Mu.Lock()
 	defer m.h2Mu.Unlock()

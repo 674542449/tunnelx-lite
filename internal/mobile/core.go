@@ -213,6 +213,10 @@ func (s *Service) Call(action string, payload []byte) []byte {
 		eng.UpdateExternalDNS(req.DNSServers)
 		return okJSON(true)
 
+	case "migrate_network":
+		eng.MigrateNetwork()
+		return okJSON(true)
+
 	case "probe":
 		var req struct {
 			ID string `json:"id"`

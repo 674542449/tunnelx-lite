@@ -36,7 +36,7 @@
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>分享链接</h2><span class="muted">粘贴到 txlite 客户端即可使用</span></div>
+    <div class="card-head"><h2>分享链接</h2><span class="muted">支持 TCP Vision（txlite://）与自研抗丢包 UDP（txpulse://），均使用自签证书指纹校验</span></div>
     <div id="links"><p class="muted">正在探测服务器公网地址…</p></div>
   </section>
 
@@ -49,7 +49,9 @@
       <div class="card-head"><h2>设置</h2></div>
       <form id="settings" class="form">
         <label>名称<input name="name" maxlength="48" required></label>
-        <label>代理端口<input name="port" type="number" min="1" max="65535" required></label>
+        <label>TCP 代理端口（Vision / H2）<input name="port" type="number" min="1" max="65535" required></label>
+        <label>TXPulse UDP 端口（自研类 Hy2）<input name="pulse_port" type="number" min="1" max="65535" required></label>
+        <label>TXPulse 端口跳跃（可选，如 20000-20031，留空为单端口）<input name="pulse_hop" type="text" placeholder="留空表示单 UDP 端口"></label>
         <label>入站方式（入口：客户端连接服务器，支持 IPv4 / IPv6）
           <select name="inbound">
             <option value="">双栈（IPv4 + IPv6 可选）</option>

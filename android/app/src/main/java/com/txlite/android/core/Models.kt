@@ -6,6 +6,8 @@ data class ServerItem(
     val host: String,
     val port: Int,
     val family: String,
+    val protocol: String = "txlite",
+    val hop: String = "",
 )
 
 data class ProbeResultItem(
@@ -22,7 +24,7 @@ data class RuleMeta(
 )
 
 data class EngineStatus(
-    val version: String = "v0.5.4",
+    val version: String = "v0.6.0",
     val connected: Boolean = false,
     val connectionState: String = "disconnected",
     val connectionStage: String = "disconnected",

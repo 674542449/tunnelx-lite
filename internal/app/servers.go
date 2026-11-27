@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -24,11 +25,13 @@ type Server struct {
 
 // ServerView is what the UI sees: everything except the secret token.
 type ServerView struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Host   string `json:"host"`
-	Port   int    `json:"port"`
-	Family string `json:"family"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Family   string `json:"family"`
+	Protocol string `json:"protocol"` // "txlite" 或 "txpulse"
+	Hop      string `json:"hop,omitempty"`
 }
 
 const serversFile = "servers.dpapi"
@@ -79,7 +82,15 @@ func view(s Server) ServerView {
 			family = "IPv6"
 		}
 	}
-	return ServerView{ID: s.ID, Name: s.Link.Name, Host: s.Link.Host, Port: s.Link.Port, Family: family}
+	proto := share.Scheme
+	hop := ""
+	if s.Link.IsPulse() {
+		proto = share.PulseScheme
+		if s.Link.HopStart > 0 && s.Link.HopEnd > s.Link.HopStart {
+			hop = strconv.Itoa(s.Link.HopStart) + "-" + strconv.Itoa(s.Link.HopEnd)
+		}
+	}
+	return ServerView{ID: s.ID, Name: s.Link.Name, Host: s.Link.Host, Port: s.Link.Port, Family: family, Protocol: proto, Hop: hop}
 }
 
 func (e *Engine) Servers() []ServerView {
@@ -92,12 +103,12 @@ func (e *Engine) Servers() []ServerView {
 	return out
 }
 
-// Import accepts one or more links separated by whitespace. A link for a
-// server already in the list (same host, port and key) updates its name.
+// Import accepts one or more links separated by whitespace (txlite:// or txpulse://).
+// A link for a server already in the list (same protocol, host, port and key) updates its name.
 func (e *Engine) Import(text string) (added int, updated int, err error) {
 	var links []share.Link
 	for _, field := range strings.Fields(text) {
-		if !strings.HasPrefix(strings.ToLower(field), share.Scheme+"://") {
+		if !share.HasSupportedScheme(field) {
 			continue
 		}
 		l, perr := share.Parse(field)
@@ -107,7 +118,7 @@ func (e *Engine) Import(text string) (added int, updated int, err error) {
 		links = append(links, l)
 	}
 	if len(links) == 0 {
-		return 0, 0, errors.New("没有找到 txlite:// 分享链接，请从服务器面板复制完整链接后再粘贴")
+		return 0, 0, errors.New("没有找到 txlite:// 或 txpulse:// 分享链接，请从服务器面板复制完整链接后再粘贴")
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -115,7 +126,7 @@ func (e *Engine) Import(text string) (added int, updated int, err error) {
 	for _, l := range links {
 		found := false
 		for i := range list {
-			if list[i].Link.Host == l.Host && list[i].Link.Port == l.Port && list[i].Link.Token == l.Token {
+			if list[i].Link.IsPulse() == l.IsPulse() && list[i].Link.Host == l.Host && list[i].Link.Port == l.Port && list[i].Link.Token == l.Token {
 				list[i].Link = l
 				found = true
 				updated++

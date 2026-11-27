@@ -163,7 +163,7 @@ function renderTable(active) {
     filter,
     on: connected(),
     nodeId: status.node_id || '',
-    servers: shown.map(s => [s.id, s.name, s.host, s.port, s.family]),
+    servers: shown.map(s => [s.id, s.name, s.host, s.port, s.family, s.protocol || 'txlite', s.hop || '']),
     probes: shown.map(s => { const p = probes.get(s.id); return p ? [p.busy, p.ms, p.error] : null; }),
   });
   if (sig === lastTableSignature) return;
@@ -194,7 +194,12 @@ function renderTable(active) {
     hostTd.title = s.host + ':' + s.port;
 
     const famTd = el('td', undefined, 'col-fam');
-    famTd.append(el('span', s.family, 'fam-pill'));
+    const isPulse = s.protocol === 'txpulse';
+    const protoEl = el('span', isPulse ? 'TXPulse' : 'Vision', 'proto-pill ' + (isPulse ? 'txpulse' : 'txlite'));
+    protoEl.title = isPulse
+      ? ('自研类 Hy2 UDP 协议 · 自签证书固定' + (s.hop ? ' · 端口跳跃 ' + s.hop : ''))
+      : 'TCP Vision / H2 (TLS 1.3 + ECH)';
+    famTd.append(protoEl, el('span', s.family, 'fam-pill'));
 
     const msTd = el('td', undefined, 'col-ms');
     const p = probes.get(s.id);
@@ -237,7 +242,7 @@ function render() {
   const mode = pref.proxy_mode === 'global' ? 'global' : 'bypass_cn';
   const tun = status.tun || {};
 
-  $('brand-version').textContent = status.version || 'v0.5.4';
+  $('brand-version').textContent = status.version || 'v0.6.0';
   $('nav-node-count').textContent = String(servers.length);
   $('header-node-count').textContent = servers.length + ' 个节点';
 
@@ -265,14 +270,26 @@ function render() {
   const tpref = status.transport_preference === 'h2' ? 'h2' : 'tcp';
   const chip = $('transport-chip');
   if (on) {
-    const actual = status.transport === 'vision' ? 'vision' : status.transport === 'h2' ? 'h2' : 'tcp';
-    chip.textContent = actual === 'vision' ? 'VISION' : actual === 'tcp' ? 'TCP' : 'H2';
+    const actual = status.transport === 'txpulse' ? 'txpulse'
+      : status.transport === 'vision' ? 'vision'
+      : status.transport === 'h2' ? 'h2' : 'tcp';
+    chip.textContent = actual === 'txpulse' ? 'TXPULSE' : actual === 'vision' ? 'VISION' : actual === 'tcp' ? 'TCP' : 'H2';
     chip.className = 'transport-chip ' + actual;
-    chip.title = actual === 'vision'
-      ? '当前使用 TCP 直连 + Vision 零拷贝直通（TLS 1.3 内层直连，无双重加密）'
-      : actual === 'tcp'
-      ? '当前使用 TCP 直连多通道（更新服务端至 v0.5.0 可启用 Vision 零拷贝）'
-      : (tpref === 'tcp' ? '服务端为旧版，当前自动兼容 HTTP/2（更新服务端可启用 Vision 极速直连）' : '当前使用 TCP HTTP/2 多路复用');
+    if (actual === 'txpulse') {
+      const ps = status.pulse_stats || {};
+      const detail = ps.srtt_ms ? (' · RTT ' + ps.srtt_ms + 'ms · 丢包 ' + (Number(ps.loss_rate || 0) * 100).toFixed(1) + '% · HyBBR ' + (ps.pacing_mbps || 0) + ' Mbps') : '';
+      chip.title = '当前使用 TXPulse 自研抗丢包 UDP 协议（自签证书指纹固定 + 自适应 HyBBR）' + detail;
+    } else {
+      chip.title = actual === 'vision'
+        ? '当前使用 TCP 直连 + Vision 零拷贝直通（TLS 1.3 内层直连，无双重加密）'
+        : actual === 'tcp'
+        ? '当前使用 TCP 直连多通道（更新服务端至 v0.5.0 可启用 Vision 零拷贝）'
+        : (tpref === 'tcp' ? '服务端为旧版，当前自动兼容 HTTP/2（更新服务端可启用 Vision 极速直连）' : '当前使用 TCP HTTP/2 多路复用');
+    }
+  } else if (currentNode && currentNode.protocol === 'txpulse') {
+    chip.textContent = 'TXPULSE';
+    chip.className = 'transport-chip txpulse';
+    chip.title = '所选节点使用 TXPulse 自研类 Hy2 UDP 协议（自签证书指纹固定 + 自适应 HyBBR）';
   } else {
     chip.textContent = tpref === 'h2' ? 'H2' : 'TCP';
     chip.className = 'transport-chip';
@@ -782,7 +799,7 @@ async function command(cmd, id) {
 
 function openManualImport() {
   const t = el('textarea');
-  t.placeholder = 'txlite://…\n可一次粘贴多个链接，每行一个';
+  t.placeholder = 'txlite://… 或 txpulse://…\n可一次粘贴多个链接，每行一个';
   dialog('添加分享链接', [field('分享链接', t)], () => importText(t.value), '导入');
 }
 
@@ -1011,6 +1028,6 @@ document.addEventListener('keydown', e => {
 });
 
 applyTheme(getStoredTheme());
-log('txlite 已就绪。复制服务器面板的 txlite:// 分享链接后按 Ctrl+V 即可导入。');
+log('txlite 已就绪。复制服务器面板的 txlite:// 或 txpulse:// 分享链接后按 Ctrl+V 即可导入。');
 refresh();
 setInterval(() => { if (!busy) refresh(); }, 1000);

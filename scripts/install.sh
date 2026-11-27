@@ -2,7 +2,7 @@
 # txlite one-click installer for Ubuntu / Debian.
 #   bash <(curl -fsSL https://raw.githubusercontent.com/674542449/tunnelx-lite/main/scripts/install.sh)
 #   ... install.sh [install|update|uninstall]
-#   Optional: PORT=443 PANEL_PORT=8443 INBOUND=ipv4|ipv6 (outbound egress is IPv4-only)
+#   Optional: PORT=443 PULSE_PORT=8444 PULSE_HOP=20000-20031 PANEL_PORT=8443 INBOUND=ipv4|ipv6 (outbound egress is IPv4-only)
 set -Eeuo pipefail
 REPO=674542449/tunnelx-lite
 BIN=/usr/local/bin/txlite
@@ -94,9 +94,17 @@ UNIT
   chmod 644 "$UNIT"
 }
 
-ports(){ python3 -c "import json;c=json.load(open('$DIR/config.json'));print(c['port'],c['panel_port'])" 2>/dev/null || true; }
-# rules lists proto:port pairs: the TCP proxy and the HTTPS panel.
-rules(){ local port panel; read -r port panel <<<"$(ports)"; test -n "$port" && echo "tcp:$port tcp:$panel"; }
+ports(){ python3 -c "import json;c=json.load(open('$DIR/config.json'));print(c.get('port',0),c.get('panel_port',0),c.get('pulse_port',0),c.get('pulse_hop_start',0),c.get('pulse_hop_end',0))" 2>/dev/null || true; }
+# rules lists proto:portSpec pairs: TCP Vision, HTTPS panel, TXPulse UDP and optional UDP hop range.
+rules(){
+  local port panel pulse hop_s hop_e
+  read -r port panel pulse hop_s hop_e <<<"$(ports)"
+  test -n "$port" || return 0
+  local list="tcp:$port tcp:$panel"
+  if test "${pulse:-0}" -gt 0; then list="$list udp:$pulse"; fi
+  if test "${hop_s:-0}" -gt 0 && test "${hop_e:-0}" -gt "${hop_s:-0}"; then list="$list udp:$hop_s:$hop_e"; fi
+  echo "$list"
+}
 
 # iptables_ports insert|delete: images such as Oracle Cloud's end INPUT with a
 # REJECT rule, so a new port stays closed until it is accepted before that rule.
@@ -119,13 +127,16 @@ iptables_ports(){
 }
 
 open_firewall(){
-  local port panel
-  read -r port panel <<<"$(ports)"
+  local port panel pulse hop_s hop_e
+  read -r port panel pulse hop_s hop_e <<<"$(ports)"
   if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
     for r in $(rules); do ufw allow "${r#*:}/${r%%:*}" >/dev/null && echo "ufw 已放行 ${r#*:}/${r%%:*}"; done
   fi
   iptables_ports insert
-  echo "如果使用云服务器，请在安全组放行 TCP $port（代理）以及 TCP $panel（面板）。"
+  local hint="TCP $port（Vision 代理）、TCP $panel（面板）"
+  if test "${pulse:-0}" -gt 0; then hint="$hint、UDP $pulse（TXPulse 代理）"; fi
+  if test "${hop_s:-0}" -gt 0 && test "${hop_e:-0}" -gt "${hop_s:-0}"; then hint="$hint、UDP $hop_s-$hop_e（TXPulse 端口跳跃）"; fi
+  echo "如果使用云服务器，请在安全组放行：$hint。"
 }
 
 install_all(){
@@ -138,7 +149,7 @@ install_all(){
   install -d -m 700 -o txlite -g txlite "$DIR"
   enable_bbr
   if test ! -f "$DIR/config.json"; then
-    runuser -u txlite -- "$BIN" -dir "$DIR" -port "${PORT:-0}" -panel-port "${PANEL_PORT:-0}" -inbound "${INBOUND:-}" -outbound "ipv4" init | tee "$DIR/.first-run"
+    runuser -u txlite -- "$BIN" -dir "$DIR" -port "${PORT:-0}" -pulse-port "${PULSE_PORT:-0}" -pulse-hop "${PULSE_HOP:-}" -panel-port "${PANEL_PORT:-0}" -inbound "${INBOUND:-}" -outbound "ipv4" init | tee "$DIR/.first-run"
     chmod 600 "$DIR/.first-run"
   fi
   write_unit
@@ -159,7 +170,7 @@ case "${1:-install}" in
   install) install_all ;;
   update)
     test -x "$BIN" || die "尚未安装"
-    download; enable_bbr; systemctl restart txlite; green "已更新到 $("$BIN" version)" ;;
+    download; enable_bbr; systemctl restart txlite; sleep 2; open_firewall; green "已更新到 $("$BIN" version)" ;;
   uninstall)
     read -rp "确定卸载 txlite？配置和密钥会一并删除，旧分享链接永久失效 [y/N]: " ok </dev/tty
     case "$ok" in y|Y) ;; *) echo "已取消"; exit 0;; esac

@@ -17,6 +17,16 @@ func (m *Mux) OpenTCPFast(ctx context.Context, target string) (*Tunnel, error) {
 	if _, p, e := net.SplitHostPort(target); e != nil || p == "" {
 		return nil, errors.New("invalid target")
 	}
+	if m.IsPulse() {
+		t, e := m.openPulseTCP(ctx, target, false)
+		if e != nil {
+			fields := errorFields(e)
+			fields["stage"] = "open_tcp"
+			m.event(ctx, "connection_open_failed", fields)
+			flowFrom(ctx).failure("open_tcp", e)
+		}
+		return t, e
+	}
 	if m.wantsDirectTCP() {
 		t, e := m.openDirectTCPFast(ctx, target)
 		if e != nil {

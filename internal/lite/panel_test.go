@@ -83,25 +83,30 @@ func TestPanelLoginSettingsAndKeyReset(t *testing.T) {
 	res, _ = cl.Get(base + "api/links")
 	json.NewDecoder(res.Body).Decode(&links)
 	res.Body.Close()
-	if len(links) != 2 || links[0].Label != "IPv4" || links[1].Label != "IPv6" {
-		t.Fatal("expected IPv4 and IPv6 links", links)
+	if len(links) != 4 || links[0].Protocol != "txlite" || links[2].Protocol != "txpulse" {
+		t.Fatal("expected IPv4/IPv6 Vision and TXPulse links", links)
 	}
 	old, err := share.Parse(links[0].URL)
-	if err != nil || old.Host != "203.0.113.5" || old.Port != 18443 {
-		t.Fatal("link does not describe this server", links[0].URL, err)
+	if err != nil || old.Host != "203.0.113.5" || old.Port != 18443 || old.IsPulse() {
+		t.Fatal("Vision link does not describe this server", links[0].URL, err)
 	}
-	if res, _ := cl.Get(base + "api/qr?i=1"); res.StatusCode != 200 || res.Header.Get("Content-Type") != "image/png" {
+	oldPulse, err := share.Parse(links[2].URL)
+	if err != nil || oldPulse.Host != "203.0.113.5" || !oldPulse.IsPulse() || oldPulse.ObfsKey == "" {
+		t.Fatal("TXPulse link does not describe this server", links[2].URL, err)
+	}
+	if res, _ := cl.Get(base + "api/qr?i=2"); res.StatusCode != 200 || res.Header.Get("Content-Type") != "image/png" {
 		t.Fatal("QR code unavailable")
 	}
 
 	call(t, cl, "POST", base+"api/settings", map[string]any{"name": "bad#name", "port": 18443, "outbound_ip": "ipv4", "bandwidth_mbps": 0, "hosts": []string{}}, 400)
 	call(t, cl, "POST", base+"api/settings", map[string]any{"name": "新名称", "port": 18443, "outbound_ip": "prefer_ipv6", "bandwidth_mbps": 10, "hosts": []string{"vpn.example.com"}}, 400)
-	out := call(t, cl, "POST", base+"api/settings", map[string]any{"name": "新名称", "port": 18443, "outbound_ip": "ipv4", "bandwidth_mbps": 10, "hosts": []string{"vpn.example.com"}}, 200)
+	call(t, cl, "POST", base+"api/settings", map[string]any{"name": "新名称", "port": 18443, "pulse_hop": "20000-20999", "outbound_ip": "ipv4", "bandwidth_mbps": 10, "hosts": []string{"vpn.example.com"}}, 400)
+	out := call(t, cl, "POST", base+"api/settings", map[string]any{"name": "新名称", "port": 18443, "pulse_hop": "20000-20015", "outbound_ip": "ipv4", "bandwidth_mbps": 10, "hosts": []string{"vpn.example.com"}}, 200)
 	if out["restart"] != true {
 		t.Fatal("speed changes must restart the proxy")
 	}
 	saved, _ := Load(r.Dir)
-	if saved.OutboundIP != "ipv4" || saved.BandwidthLimit != 1250000 || saved.Hosts[0] != "vpn.example.com" {
+	if saved.OutboundIP != "ipv4" || saved.BandwidthLimit != 1250000 || saved.Hosts[0] != "vpn.example.com" || saved.PulseHopStart != 20000 || saved.PulseHopEnd != 20015 {
 		t.Fatal("settings not persisted or outbound not locked to ipv4", saved)
 	}
 
@@ -111,8 +116,9 @@ func TestPanelLoginSettingsAndKeyReset(t *testing.T) {
 	json.NewDecoder(res.Body).Decode(&links)
 	res.Body.Close()
 	fresh, _ := share.Parse(links[0].URL)
-	if len(links) != 1 || fresh.Host != "vpn.example.com" || fresh.Token == old.Token {
-		t.Fatal("key reset or custom host not reflected in links", links)
+	freshPulse, _ := share.Parse(links[1].URL)
+	if len(links) != 2 || fresh.Host != "vpn.example.com" || fresh.Token == old.Token || !freshPulse.IsPulse() || freshPulse.ObfsKey == oldPulse.ObfsKey || freshPulse.HopStart != 20000 {
+		t.Fatal("key reset or custom host not reflected in Vision + TXPulse links", links)
 	}
 
 	call(t, cl, "POST", base+"api/password", map[string]string{"current": "wrong-password", "new": "another-password"}, 400)

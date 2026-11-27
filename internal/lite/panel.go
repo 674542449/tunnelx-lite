@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/674542449/tunnelx-lite/internal/pulse"
 	"rsc.io/qr"
 )
 
@@ -192,6 +193,8 @@ type settings struct {
 	Name          string   `json:"name"`
 	Hosts         []string `json:"hosts"`
 	Port          int      `json:"port"`
+	PulsePort     int      `json:"pulse_port,omitempty"`
+	PulseHop      string   `json:"pulse_hop,omitempty"`
 	Inbound       string   `json:"inbound"`
 	OutboundIP    string   `json:"outbound_ip"`
 	BandwidthMbps float64  `json:"bandwidth_mbps"`
@@ -205,7 +208,7 @@ func (r *Runtime) api(w http.ResponseWriter, req *http.Request, api, session, pr
 		ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
 		v4, v6 := detectIPs(ctx)
 		cancel()
-		reply(w, 200, map[string]any{"version": Version, "name": c.Name, "uptime": int64(time.Since(r.started).Seconds()), "active": r.srv.Active.Load(), "uploaded": t.Uploaded, "downloaded": t.Downloaded, "port": c.Port, "panel_port": c.PanelPort, "inbound": c.Inbound, "outbound_ip": c.OutboundIP, "bandwidth_limit": c.BandwidthLimit, "ipv4": v4, "ipv6": v6, "system": systemInfo(), "proxy_error": r.ProxyError()})
+		reply(w, 200, map[string]any{"version": Version, "name": c.Name, "uptime": int64(time.Since(r.started).Seconds()), "active": r.srv.Active.Load(), "uploaded": t.Uploaded, "downloaded": t.Downloaded, "port": c.Port, "pulse_port": c.PulsePort, "pulse_hop": c.HopRangeString(), "panel_port": c.PanelPort, "inbound": c.Inbound, "outbound_ip": c.OutboundIP, "bandwidth_limit": c.BandwidthLimit, "ipv4": v4, "ipv6": v6, "system": systemInfo(), "proxy_error": r.ProxyError()})
 	case api == "links" && req.Method == "GET":
 		reply(w, 200, r.links(req.Context()))
 	case api == "qr" && req.Method == "GET":
@@ -225,11 +228,11 @@ func (r *Runtime) api(w http.ResponseWriter, req *http.Request, api, session, pr
 		w.Write(code.PNG())
 	case api == "settings" && req.Method == "GET":
 		c := r.config()
-		reply(w, 200, settings{Name: c.Name, Hosts: append([]string{}, c.Hosts...), Port: c.Port, Inbound: c.Inbound, OutboundIP: c.OutboundIP, BandwidthMbps: float64(c.BandwidthLimit) / 125000})
+		reply(w, 200, settings{Name: c.Name, Hosts: append([]string{}, c.Hosts...), Port: c.Port, PulsePort: c.PulsePort, PulseHop: c.HopRangeString(), Inbound: c.Inbound, OutboundIP: c.OutboundIP, BandwidthMbps: float64(c.BandwidthLimit) / 125000})
 	case api == "settings" && req.Method == "POST":
 		r.saveSettings(w, req)
 	case api == "token/reset" && req.Method == "POST":
-		r.update(w, func(c *Config) bool { c.Token = NewToken(); return true }, "密钥已重置，旧分享链接已失效")
+		r.update(w, func(c *Config) bool { c.Token = NewToken(); c.PulseObfs = pulse.GenerateObfsKey(); return true }, "密钥与 TXPulse 混淆种子已重置，旧分享链接已失效")
 	case api == "password" && req.Method == "POST":
 		var b struct {
 			Current string `json:"current"`
@@ -284,6 +287,15 @@ func (r *Runtime) saveSettings(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	old := r.config()
+	pulsePort := b.PulsePort
+	if pulsePort == 0 {
+		pulsePort = old.PulsePort
+	}
+	hopStart, hopEnd, hopErr := ParseHopRange(b.PulseHop)
+	if hopErr != nil {
+		fail(w, 400, hopErr.Error())
+		return
+	}
 	// A listener the kernel refuses would leave the proxy down after the
 	// restart, so try the new port and address family first.
 	network := map[string]string{"ipv4": "tcp4", "ipv6": "tcp6"}[b.Inbound]
@@ -298,13 +310,29 @@ func (r *Runtime) saveSettings(w http.ResponseWriter, req *http.Request) {
 		l, e := net.Listen(network, addr)
 		if e != nil {
 			if b.Port != old.Port {
-				fail(w, 400, "端口 "+strconv.Itoa(b.Port)+" 已被占用或无权使用")
+				fail(w, 400, "TCP 端口 "+strconv.Itoa(b.Port)+" 已被占用或无权使用")
 			} else {
 				fail(w, 400, "本机系统不支持所选的入站方式")
 			}
 			return
 		}
 		l.Close()
+	}
+	if pulsePort != old.PulsePort || b.Inbound != old.Inbound {
+		udpNet := map[string]string{"ipv4": "udp4", "ipv6": "udp6"}[b.Inbound]
+		if udpNet == "" {
+			udpNet = "udp"
+		}
+		addr := ":0"
+		if pulsePort != old.PulsePort && pulsePort > 0 {
+			addr = ":" + strconv.Itoa(pulsePort)
+		}
+		pc, e := net.ListenPacket(udpNet, addr)
+		if e != nil {
+			fail(w, 400, "TXPulse UDP 端口 "+strconv.Itoa(pulsePort)+" 已被占用或无权使用")
+			return
+		}
+		pc.Close()
 	}
 	hosts := []string{}
 	for _, h := range b.Hosts {
@@ -331,8 +359,8 @@ func (r *Runtime) saveSettings(w http.ResponseWriter, req *http.Request) {
 	}
 	limit := int64(math.Round(b.BandwidthMbps * 125000))
 	r.update(w, func(c *Config) bool {
-		restart := c.Port != b.Port || c.Inbound != b.Inbound || c.OutboundIP != b.OutboundIP || c.BandwidthLimit != limit
-		c.Name, c.Hosts, c.Port, c.Inbound, c.OutboundIP, c.BandwidthLimit = b.Name, hosts, b.Port, b.Inbound, "ipv4", limit
+		restart := c.Port != b.Port || c.PulsePort != pulsePort || c.PulseHopStart != hopStart || c.PulseHopEnd != hopEnd || c.Inbound != b.Inbound || c.OutboundIP != b.OutboundIP || c.BandwidthLimit != limit
+		c.Name, c.Hosts, c.Port, c.PulsePort, c.PulseHopStart, c.PulseHopEnd, c.Inbound, c.OutboundIP, c.BandwidthLimit = b.Name, hosts, b.Port, pulsePort, hopStart, hopEnd, b.Inbound, "ipv4", limit
 		return restart
 	}, "设置已保存")
 }

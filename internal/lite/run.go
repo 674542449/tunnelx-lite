@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/674542449/tunnelx-lite/internal/config"
+	"github.com/674542449/tunnelx-lite/internal/pulse"
 	"github.com/674542449/tunnelx-lite/internal/server"
 )
 
@@ -25,26 +26,31 @@ type traffic struct {
 	Downloaded int64 `json:"downloaded"`
 }
 
-// Runtime owns the running proxy and serves the owner panel.
+// Runtime owns both the TCP Vision proxy and the TXPulse UDP proxy alongside the owner panel.
 type Runtime struct {
-	Dir     Dir
-	Restart func() // replaced in tests; systemd restarts the process
-	mu      sync.Mutex
-	cfg     Config
-	id      Identity
-	srv     *server.Server
-	started time.Time
-	base    traffic // persisted totals minus what srv has counted in this run
-	logs    *ring
-	auth    sessions
-	// proxyErr is set when the proxy listener could not start; the panel keeps
-	// running so the owner can pick another port or inbound family.
+	Dir      Dir
+	Restart  func() // replaced in tests; systemd restarts the process
+	mu       sync.Mutex
+	cfg      Config
+	id       Identity
+	srv      *server.Server
+	pulseSrv *pulse.Server
+	started  time.Time
+	base     traffic // persisted totals minus what srv has counted in this run
+	logs     *ring
+	auth     sessions
+	// proxyErr / pulseErr are set when a proxy listener could not start; the panel
+	// keeps running so the owner can pick another port or inbound family.
 	proxyErr atomic.Value
+	pulseErr atomic.Value
 }
 
 func Open(d Dir) (*Runtime, error) {
 	c, e := Load(d)
 	if e != nil {
+		return nil, e
+	}
+	if _, e = EnsurePulseIdentity(d, &c); e != nil {
 		return nil, e
 	}
 	id, e := LoadIdentity(d)
@@ -55,7 +61,14 @@ func Open(d Dir) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	r := &Runtime{Dir: d, cfg: c, id: id, srv: srv, started: time.Now(), logs: newRing(300), auth: newSessions()}
+	var ps *pulse.Server
+	if c.PulsePort > 0 && c.PulseObfs != "" {
+		ps, e = srv.NewPulseServer()
+		if e != nil {
+			return nil, e
+		}
+	}
+	r := &Runtime{Dir: d, cfg: c, id: id, srv: srv, pulseSrv: ps, started: time.Now(), logs: newRing(300), auth: newSessions()}
 	r.Restart = func() { r.persist(); os.Exit(0) }
 	var t traffic
 	if config.Read(d.Traffic(), &t) == nil {
@@ -64,8 +77,18 @@ func Open(d Dir) (*Runtime, error) {
 	return r, nil
 }
 
-// ProxyError is empty while the proxy listener is serving.
-func (r *Runtime) ProxyError() string { s, _ := r.proxyErr.Load().(string); return s }
+// ProxyError is empty while all proxy listeners are serving.
+func (r *Runtime) ProxyError() string {
+	a, _ := r.proxyErr.Load().(string)
+	b, _ := r.pulseErr.Load().(string)
+	if a != "" && b != "" {
+		return a + "；" + b
+	}
+	if a != "" {
+		return a
+	}
+	return b
+}
 
 func (r *Runtime) Totals() traffic {
 	r.mu.Lock()
@@ -87,7 +110,7 @@ func (r *Runtime) resetTraffic() {
 	r.persist()
 }
 
-// Run serves the proxy and the panel until ctx ends or either listener fails.
+// Run serves the TCP Vision proxy, TXPulse UDP proxy and HTTPS panel until ctx ends.
 func (r *Runtime) Run(ctx context.Context) error {
 	log.SetOutput(io.MultiWriter(os.Stderr, r.logs))
 	cert, e := tls.LoadX509KeyPair(r.Dir.Cert(), r.Dir.Key())
@@ -95,10 +118,17 @@ func (r *Runtime) Run(ctx context.Context) error {
 		return e
 	}
 	panel := &http.Server{Addr: ":" + strconv.Itoa(r.cfg.PanelPort), Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}, ErrorLog: log.New(io.Discard, "", 0)}
-	proxyErrs, errs := make(chan error, 1), make(chan error, 1)
+	proxyErrs, pulseErrs, errs := make(chan error, 1), make(chan error, 1), make(chan error, 1)
 	go func() { proxyErrs <- r.srv.Serve(ctx) }()
+	if r.pulseSrv != nil {
+		go func() { pulseErrs <- r.pulseSrv.Serve(ctx) }()
+	}
 	go func() { errs <- panel.ListenAndServeTLS("", "") }()
-	log.Printf("txlite %s 已启动：代理端口 %d/TCP，面板端口 %d/TCP", Version, r.cfg.Port, r.cfg.PanelPort)
+	if hop := r.cfg.HopRangeString(); hop != "" {
+		log.Printf("txlite %s 已启动：TCP Vision %d/TCP，TXPulse %d/UDP（跳跃 %s/UDP），面板 %d/TCP", Version, r.cfg.Port, r.cfg.PulsePort, hop, r.cfg.PanelPort)
+	} else {
+		log.Printf("txlite %s 已启动：TCP Vision %d/TCP，TXPulse %d/UDP，面板 %d/TCP", Version, r.cfg.Port, r.cfg.PulsePort, r.cfg.PanelPort)
+	}
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	for {
@@ -114,8 +144,18 @@ func (r *Runtime) Run(ctx context.Context) error {
 			if e == nil {
 				e = errors.New("listener stopped")
 			}
-			msg := fmt.Sprintf("代理端口 %d 启动失败：%v。面板仍可使用，请在设置里更换端口或入站方式", r.cfg.Port, e)
+			msg := fmt.Sprintf("TCP 代理端口 %d 启动失败：%v。面板仍可使用，请在设置里更换端口或入站方式", r.cfg.Port, e)
 			r.proxyErr.Store(msg)
+			log.Print(msg)
+		case e = <-pulseErrs:
+			if ctx.Err() != nil {
+				continue
+			}
+			if e == nil {
+				e = errors.New("udp listener stopped")
+			}
+			msg := fmt.Sprintf("TXPulse UDP 端口 %d 启动失败：%v。面板仍可使用，请在设置里更换 UDP 端口", r.cfg.PulsePort, e)
+			r.pulseErr.Store(msg)
 			log.Print(msg)
 		case e = <-errs:
 			panel.Close()

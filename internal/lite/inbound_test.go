@@ -6,15 +6,15 @@ import (
 )
 
 func TestInboundFamilyShapesListenerAndLinks(t *testing.T) {
-	c := Config{Name: "n", Port: 443, PanelPort: 8443, PanelPath: "abcdefghij", Token: NewToken(), InnerName: "a.invalid"}
-	id := Identity{ECHConfig: "AAAA", CertPin: "pin"}
+	c := Config{Name: "n", Port: 443, PulsePort: 8444, PulseObfs: "AAAAAAAAAAAAAAAAAAAAAA", PanelPort: 8443, PanelPath: "abcdefghij", Token: NewToken(), InnerName: "a.invalid"}
+	id := Identity{ECHConfig: "AAAA", CertPin: "pin", PulseCertPin: "pulsepin"}
 	for inbound, want := range map[string]struct {
 		network string
 		labels  string
 	}{
-		"":     {"", "IPv4,IPv6,"},
-		"ipv4": {"tcp4", "IPv4,"},
-		"ipv6": {"tcp6", "IPv6,"},
+		"":     {"", "IPv4 · TCP Vision,IPv6 · TCP Vision,IPv4 · TXPulse UDP,IPv6 · TXPulse UDP,"},
+		"ipv4": {"tcp4", "IPv4 · TCP Vision,IPv4 · TXPulse UDP,"},
+		"ipv6": {"tcp6", "IPv6 · TCP Vision,IPv6 · TXPulse UDP,"},
 	} {
 		c.Inbound = inbound
 		if e := c.Validate(); e != nil {

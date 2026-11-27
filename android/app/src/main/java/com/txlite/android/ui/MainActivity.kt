@@ -136,7 +136,7 @@ class MainActivity : ComponentActivity() {
                         onQrResult = callback
                         val opts = ScanOptions().apply {
                             setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                            setPrompt("对准服务器面板生成的 txlite:// 二维码")
+                            setPrompt("对准服务器面板生成的 txlite:// 或 txpulse:// 二维码")
                             setBeepEnabled(false)
                             setOrientationLocked(false)
                         }
@@ -222,7 +222,7 @@ private fun TxliteRootApp(
 
     fun importText(text: String) {
         if (text.isBlank()) {
-            showMessage("内容为空，未找到 txlite:// 链接")
+            showMessage("内容为空，未找到 txlite:// 或 txpulse:// 链接")
             return
         }
         scope.launch {

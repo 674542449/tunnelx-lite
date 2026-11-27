@@ -19,6 +19,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/client"
 	"github.com/674542449/tunnelx-lite/internal/config"
 	"github.com/674542449/tunnelx-lite/internal/pki"
+	"github.com/674542449/tunnelx-lite/internal/pulse"
 	"github.com/674542449/tunnelx-lite/internal/server"
 )
 
@@ -161,5 +162,102 @@ func TestParseCutsLongNamesByCharacter(t *testing.T) {
 	got, err := Parse(link.String())
 	if err != nil || got.Name != strings.Repeat("测", 64) {
 		t.Fatal("long name not cut on a character boundary", got.Name, err)
+	}
+}
+
+func TestPulseShareLinkEndToEnd(t *testing.T) {
+	echo := echoServer(t)
+	dir := t.TempDir()
+	certPEM, keyPEM, err := pki.SelfSigned([]string{"pulse-e2e.local"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certFile := filepath.Join(dir, "pulse-cert.pem")
+	keyFile := filepath.Join(dir, "pulse-key.pem")
+	_ = os.WriteFile(certFile, certPEM, 0600)
+	_ = os.WriteFile(keyFile, keyPEM, 0600)
+
+	// 找空闲 UDP 端口
+	uc, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	udpPort := uc.LocalAddr().(*net.UDPAddr).Port
+	_ = uc.Close()
+
+	tok := token(t)
+	obfs := pulse.GenerateObfsKey()
+	cfg := config.Server{
+		Listen:                "127.0.0.1:0",
+		CertFile:              certFile,
+		KeyFile:               keyFile,
+		PulseListen:           net.JoinHostPort("127.0.0.1", strconv.Itoa(udpPort)),
+		PulseCertFile:         certFile,
+		PulseKeyFile:          keyFile,
+		PulseObfs:             obfs,
+		Tokens:                []string{tok},
+		AllowedPrivateTargets: []string{echo},
+		Network:               "tcp4",
+		OutboundIP:            "ipv4",
+	}
+	s, err := server.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps, err := s.NewPulseServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go ps.Serve(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	blk, _ := pem.Decode(certPEM)
+	leaf, _ := x509.ParseCertificate(blk.Bytes)
+	link := Link{
+		Protocol: PulseScheme,
+		Name:     "测试 TXPulse 节点",
+		Host:     "127.0.0.1",
+		Port:     udpPort,
+		Token:    tok,
+		CertPin:  config.CertPin(leaf),
+		ObfsKey:  obfs,
+	}
+	raw := link.String()
+	parsed, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse(%q): %v", raw, err)
+	}
+	if parsed != link || !parsed.IsPulse() {
+		t.Fatalf("txpulse link round-trip mismatch:\ngot  %+v\nwant %+v", parsed, link)
+	}
+
+	m, err := client.New(parsed.Client("127.0.0.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if m.ActiveTransport() != "txpulse" {
+		t.Fatalf("expected active transport txpulse, got %q", m.ActiveTransport())
+	}
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dialCancel()
+	if _, err := m.ProbePulse(dialCtx); err != nil {
+		t.Fatalf("ProbePulse failed: %v", err)
+	}
+	st, err := m.OpenTCP(dialCtx, echo)
+	if err != nil {
+		t.Fatalf("OpenTCP over TXPulse failed: %v", err)
+	}
+	defer st.Close()
+	_, _ = st.Write([]byte("hello-txpulse"))
+	buf := make([]byte, 13)
+	if _, err := io.ReadFull(st, buf); err != nil || string(buf) != "hello-txpulse" {
+		t.Fatalf("echo over TXPulse failed: %v %q", err, string(buf))
+	}
+	if s.Uploaded.Load() == 0 || s.Downloaded.Load() == 0 {
+		t.Fatalf("shared server traffic counters not updated: up=%d down=%d", s.Uploaded.Load(), s.Downloaded.Load())
 	}
 }

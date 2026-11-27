@@ -22,6 +22,7 @@ import (
 const Version = "1"
 
 type Client struct {
+	Protocol       string `json:"protocol,omitempty"` // "" / "txlite" 或 "txpulse"
 	ServerName     string `json:"server_name"`
 	ServerIP       string `json:"server_ip"`
 	Port           int    `json:"port"`
@@ -31,6 +32,11 @@ type Client struct {
 	ECHConfig      string `json:"ech_config,omitempty"`
 	CAFile         string `json:"ca_file,omitempty"`
 	CertPin        string `json:"cert_pin,omitempty"`
+	ObfsKey        string `json:"obfs_key,omitempty"`
+	HopStart       int    `json:"hop_start,omitempty"`
+	HopEnd         int    `json:"hop_end,omitempty"`
+	PulseDownBPS   uint64 `json:"pulse_down_bps,omitempty"`
+	PulseUpBPS     uint64 `json:"pulse_up_bps,omitempty"`
 	SOCKSListen    string `json:"socks_listen"`
 	HTTPListen     string `json:"http_listen"`
 	WebListen      string `json:"web_listen"`
@@ -52,6 +58,12 @@ type Server struct {
 	InnerName             string              `json:"inner_name,omitempty"`
 	InnerCertFile         string              `json:"inner_cert_file,omitempty"`
 	InnerKeyFile          string              `json:"inner_key_file,omitempty"`
+	PulseListen           string              `json:"pulse_listen,omitempty"`
+	PulseCertFile         string              `json:"pulse_cert_file,omitempty"`
+	PulseKeyFile          string              `json:"pulse_key_file,omitempty"`
+	PulseObfs             string              `json:"pulse_obfs,omitempty"`
+	PulseHopStart         int                 `json:"pulse_hop_start,omitempty"`
+	PulseHopEnd           int                 `json:"pulse_hop_end,omitempty"`
 	Tokens                []string            `json:"tokens"`
 	PublicDir             string              `json:"public_dir,omitempty"`
 	AllowedPrivateTargets []string            `json:"allowed_private_targets,omitempty"`
@@ -104,8 +116,17 @@ func (c *Client) Validate() error {
 			return errors.New("device_id must be 16-byte hex")
 		}
 	}
-	if c.ServerName == "" || strings.ContainsAny(c.ServerName, " /\\:@") {
-		return errors.New("server_name must be a DNS name")
+	if c.Protocol == "txpulse" {
+		c.Transport = "pulse"
+	}
+	if c.Transport == "" {
+		c.Transport = "h2"
+	}
+	// "pulse" uses the custom TXPulse UDP tunnel (self-signed ECDSA CertPin + X25519 + HyBBR);
+	// "tcp" opens a dedicated TLS 1.3 TCP tunnel per flow (Vision zero-copy);
+	// "h2" multiplexes streams over pooled HTTP/2 over TCP connections.
+	if c.Transport != "tcp" && c.Transport != "h2" && c.Transport != "pulse" {
+		return errors.New("transport must be tcp, h2 or pulse")
 	}
 	if net.ParseIP(c.ServerIP) == nil {
 		return errors.New("server_ip must be a literal bootstrap IP; no local DNS lookup")
@@ -113,22 +134,33 @@ func (c *Client) Validate() error {
 	if c.Port < 1 || c.Port > 65535 || !TokenValid(c.Token) {
 		return errors.New("invalid server port or token")
 	}
-	if c.Transport == "" {
-		c.Transport = "h2"
-	}
-	// "tcp" opens a dedicated TLS 1.3 TCP tunnel per flow (no H2 HoL blocking);
-	// "h2" multiplexes streams over pooled HTTP/2 over TCP connections.
-	if c.Transport != "tcp" && c.Transport != "h2" {
-		return errors.New("transport must be tcp or h2")
-	}
-	if c.Privacy == "" {
-		c.Privacy = "normal"
-	}
-	if c.Privacy != "normal" && c.Privacy != "strict" {
-		return errors.New("privacy must be normal or strict")
-	}
-	if c.Privacy == "strict" && c.ECHConfig == "" {
-		return errors.New("strict privacy requires an ECH configuration")
+	if c.Transport == "pulse" {
+		ob, err := base64.RawURLEncoding.DecodeString(c.ObfsKey)
+		if err != nil || len(ob) < 16 || len(ob) > 32 {
+			return errors.New("pulse transport requires a valid obfs_key")
+		}
+		pin, err := base64.RawURLEncoding.DecodeString(c.CertPin)
+		if err != nil || len(pin) != 32 {
+			return errors.New("pulse transport requires a valid self-signed cert_pin")
+		}
+		if c.HopStart != 0 || c.HopEnd != 0 {
+			if c.HopStart < 1 || c.HopEnd > 65535 || c.HopEnd <= c.HopStart {
+				return errors.New("invalid pulse port hopping range")
+			}
+		}
+	} else {
+		if c.ServerName == "" || strings.ContainsAny(c.ServerName, " /\\:@") {
+			return errors.New("server_name must be a DNS name")
+		}
+		if c.Privacy == "" {
+			c.Privacy = "normal"
+		}
+		if c.Privacy != "normal" && c.Privacy != "strict" {
+			return errors.New("privacy must be normal or strict")
+		}
+		if c.Privacy == "strict" && c.ECHConfig == "" {
+			return errors.New("strict privacy requires an ECH configuration")
+		}
 	}
 	if c.SOCKSListen == "" {
 		c.SOCKSListen = "127.0.0.1:1080"
@@ -240,6 +272,9 @@ func (s *Server) Validate() error {
 	return nil
 }
 func (c Client) TLS() (*tls.Config, error) {
+	if c.Transport == "pulse" {
+		return nil, nil
+	}
 	roots, e := x509.SystemCertPool()
 	if e != nil {
 		roots = x509.NewCertPool()

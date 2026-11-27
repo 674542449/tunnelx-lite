@@ -13,12 +13,14 @@ import (
 )
 
 type ShareLink struct {
-	Label string `json:"label"`
-	Host  string `json:"host"`
-	URL   string `json:"url"`
+	Label    string `json:"label"`
+	Protocol string `json:"protocol"` // "txlite" 或 "txpulse"
+	Host     string `json:"host"`
+	URL      string `json:"url"`
 }
 
-// Links lists one link per custom host, or per detected public IPv4/IPv6.
+// Links lists TCP Vision (txlite://) and TXPulse UDP (txpulse://) share links
+// per custom host, or per detected public IPv4/IPv6.
 func Links(c Config, id Identity, v4, v6 string) []ShareLink {
 	type entry struct{ label, host string }
 	var hosts []entry
@@ -35,13 +37,44 @@ func Links(c Config, id Identity, v4, v6 string) []ShareLink {
 		}
 	}
 	out := []ShareLink{}
+	// 1. 原有 TCP Vision / H2 链接（txlite://）
 	for _, h := range hosts {
 		name := c.Name
 		if len(hosts) > 1 && len(c.Hosts) == 0 {
 			name += " " + h.label
 		}
-		l := share.Link{Name: name, Host: h.host, Port: c.Port, Token: c.Token, ServerName: c.InnerName, ECHConfig: id.ECHConfig, CertPin: id.CertPin}
-		out = append(out, ShareLink{Label: h.label, Host: h.host, URL: l.String()})
+		l := share.Link{
+			Protocol:   share.Scheme,
+			Name:       name,
+			Host:       h.host,
+			Port:       c.Port,
+			Token:      c.Token,
+			ServerName: c.InnerName,
+			ECHConfig:  id.ECHConfig,
+			CertPin:    id.CertPin,
+		}
+		out = append(out, ShareLink{Label: h.label + " · TCP Vision", Protocol: share.Scheme, Host: h.host, URL: l.String()})
+	}
+	// 2. 自研类 Hy2 UDP 协议链接（txpulse://，独立自签证书指纹 + 混淆 + 可选端口跳跃）
+	if c.PulsePort > 0 && c.PulseObfs != "" && id.PulseCertPin != "" {
+		for _, h := range hosts {
+			name := c.Name + " TXPulse"
+			if len(hosts) > 1 && len(c.Hosts) == 0 {
+				name = c.Name + " " + h.label + " TXPulse"
+			}
+			l := share.Link{
+				Protocol: share.PulseScheme,
+				Name:     name,
+				Host:     h.host,
+				Port:     c.PulsePort,
+				Token:    c.Token,
+				CertPin:  id.PulseCertPin,
+				ObfsKey:  c.PulseObfs,
+				HopStart: c.PulseHopStart,
+				HopEnd:   c.PulseHopEnd,
+			}
+			out = append(out, ShareLink{Label: h.label + " · TXPulse UDP", Protocol: share.PulseScheme, Host: h.host, URL: l.String()})
+		}
 	}
 	return out
 }

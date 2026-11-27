@@ -43,8 +43,11 @@ func (m *Mux) wantsDirectTCP() bool {
 	return m.Config.Transport == "tcp" && !m.directUnsupported.Load()
 }
 
-// ActiveTransport reports what new TCP flows use right now: "vision", "tcp", or "h2".
+// ActiveTransport reports what new TCP flows use right now: "txpulse", "vision", "tcp", or "h2".
 func (m *Mux) ActiveTransport() string {
+	if m.IsPulse() {
+		return "txpulse"
+	}
 	if m.wantsDirectTCP() {
 		if m.visionSupported.Load() {
 			return "vision"
@@ -58,7 +61,7 @@ func (m *Mux) ActiveTransport() string {
 // first web pages, downloads, or video segments after connecting start with
 // zero TCP/TLS handshake latency.
 func (m *Mux) Prewarm() {
-	if !m.wantsDirectTCP() {
+	if m.IsPulse() || !m.wantsDirectTCP() {
 		return
 	}
 	m.replenishDirectPool(4)

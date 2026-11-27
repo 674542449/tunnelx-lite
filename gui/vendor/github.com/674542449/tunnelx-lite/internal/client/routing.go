@@ -148,11 +148,7 @@ func (p *Proxy) openTCPWithHint(ctx context.Context, target, routeTarget string)
 	return t, nil
 }
 
-type packetTransport interface {
-	Send([]byte) error
-	Receive(context.Context) ([]byte, error)
-	Close() error
-}
+type packetTransport = PacketTransport
 type directPackets struct {
 	c    net.Conn
 	stop func() bool
@@ -174,7 +170,7 @@ func (d *directPackets) Receive(ctx context.Context) ([]byte, error) {
 }
 func (d *directPackets) Close() error { d.stop(); return d.c.Close() }
 
-func (p *Proxy) openUDP(ctx context.Context, target string) (packetTransport, error) {
+func (p *Proxy) openUDP(ctx context.Context, target string) (PacketTransport, error) {
 	if p.TUN {
 		if _, port, _ := net.SplitHostPort(target); port == "53" {
 			return p.dnsUDP(ctx), nil
