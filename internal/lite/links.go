@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"github.com/674542449/tunnelx-lite/internal/share"
+	"github.com/674542449/tunnelx-lite/internal/vless"
 )
 
 type ShareLink struct {
 	Label    string `json:"label"`
-	Protocol string `json:"protocol"` // "txlite" 或 "txpulse"
+	Protocol string `json:"protocol"` // "txlite"、"txpulse" 或 "vless"
 	Host     string `json:"host"`
 	URL      string `json:"url"`
 }
@@ -74,6 +75,19 @@ func Links(c Config, id Identity, v4, v6 string) []ShareLink {
 				HopEnd:   c.PulseHopEnd,
 			}
 			out = append(out, ShareLink{Label: h.label + " · TXPulse UDP", Protocol: share.PulseScheme, Host: h.host, URL: l.String()})
+		}
+	}
+	// 3. iOS 小火箭兼容链接（vless:// 标准 VLESS + REALITY + xtls-rprx-vision，复用 TCP 端口）
+	if c.IsRealityEnabled() {
+		if pbk, err := vless.RealityPublicKey(c.RealityPrivateKey); err == nil && pbk != "" {
+			for _, h := range hosts {
+				name := c.Name + " iOS"
+				if len(hosts) > 1 && len(c.Hosts) == 0 {
+					name = c.Name + " " + h.label + " iOS"
+				}
+				u := vless.ShareURL(c.RealityUUID, h.host, c.Port, c.RealitySNI, pbk, c.RealityShortID, name)
+				out = append(out, ShareLink{Label: h.label + " · iOS 小火箭 (REALITY)", Protocol: "vless", Host: h.host, URL: u})
+			}
 		}
 	}
 	return out

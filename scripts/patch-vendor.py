@@ -38,6 +38,12 @@ file_patches = {
             'cc.bw = bufio.NewWriterSize(stickyErrWriter{\n\t\tconn:    c,\n\t\ttimeout: conf.WriteByteTimeout,\n\t\terr:     &cc.werr,\n\t}, 64<<10)\n\tcc.br = bufio.NewReaderSize(c, 64<<10)',
         ),
     ],
+    'github.com/xtls/reality/tls.go': [
+        (
+            'if peerPub2 == nil {\n\t\t\t\tbreak // reject outdated/strange Client Hello that doesn\'t have X25519MLKEM768 before optional X25519\n\t\t\t}',
+            '// txlite: allow both X25519MLKEM768 (Chrome 131+) and standard X25519 (Shadowrocket iOS/Safari) REALITY clients.',
+        ),
+    ],
 }
 
 for root in ('vendor', 'gui/vendor'):

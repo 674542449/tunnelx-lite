@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,18 +19,24 @@ import (
 
 	"github.com/674542449/tunnelx-lite/internal/config"
 	"github.com/674542449/tunnelx-lite/internal/pulse"
+	"github.com/674542449/tunnelx-lite/internal/vless"
 )
 
-const Version = "v0.6.3"
+const Version = "v0.7.0"
 
 type Config struct {
-	Name           string   `json:"name"`
-	Port           int      `json:"port"`
-	PulsePort      int      `json:"pulse_port,omitempty"`
-	PulseObfs      string   `json:"pulse_obfs,omitempty"`
-	PulseHopStart  int      `json:"pulse_hop_start,omitempty"`
-	PulseHopEnd    int      `json:"pulse_hop_end,omitempty"`
-	PanelPort      int      `json:"panel_port"`
+	Name              string   `json:"name"`
+	Port              int      `json:"port"`
+	PulsePort         int      `json:"pulse_port,omitempty"`
+	PulseObfs         string   `json:"pulse_obfs,omitempty"`
+	PulseHopStart     int      `json:"pulse_hop_start,omitempty"`
+	PulseHopEnd       int      `json:"pulse_hop_end,omitempty"`
+	RealityEnabled    *bool    `json:"reality_enabled,omitempty"`
+	RealityUUID       string   `json:"reality_uuid,omitempty"`
+	RealityPrivateKey string   `json:"reality_private_key,omitempty"`
+	RealityShortID    string   `json:"reality_short_id,omitempty"`
+	RealitySNI        string   `json:"reality_sni,omitempty"`
+	PanelPort         int      `json:"panel_port"`
 	PanelPath      string   `json:"panel_path"`
 	PanelHash      string   `json:"panel_password_hash"`
 	Token          string   `json:"token"`
@@ -73,6 +80,28 @@ func (c *Config) Validate() error {
 		if c.PulseHopStart < 1 || c.PulseHopEnd > 65535 || c.PulseHopEnd <= c.PulseHopStart || c.PulseHopEnd-c.PulseHopStart+1 > 128 {
 			return errors.New("TXPulse 端口跳跃范围无效（需为 2–128 个连续有效端口）")
 		}
+	}
+	if c.RealityUUID != "" {
+		if _, err := vless.ParseUUID(c.RealityUUID); err != nil {
+			return err
+		}
+	}
+	if c.RealityPrivateKey != "" {
+		if _, err := vless.ParseRealityPrivateKey(c.RealityPrivateKey); err != nil {
+			return err
+		}
+	}
+	if c.RealityShortID != "" {
+		if _, err := vless.ParseShortID(c.RealityShortID); err != nil {
+			return err
+		}
+	}
+	if c.RealitySNI != "" {
+		norm, err := vless.NormalizeSNI(c.RealitySNI)
+		if err != nil {
+			return err
+		}
+		c.RealitySNI = norm
 	}
 	if len(c.PanelPath) < 8 || strings.ContainsAny(c.PanelPath, "/?#% ") {
 		return errors.New("面板路径无效")
@@ -154,13 +183,23 @@ func Save(d Dir, c Config) error {
 	return writeFile(d.Config(), append(b, '\n'))
 }
 
+func boolPtr(v bool) *bool { return &v }
+
+// IsRealityEnabled 报告 iOS 小火箭兼容（VLESS + REALITY + Vision）是否启用且配置完整。
+func (c Config) IsRealityEnabled() bool {
+	if c.RealityEnabled != nil && !*c.RealityEnabled {
+		return false
+	}
+	return c.RealityUUID != "" && c.RealityPrivateKey != "" && c.RealitySNI != ""
+}
+
 // Server builds the kernel server configuration from the owner settings.
 func (c Config) Server(d Dir) config.Server {
 	pulseListen := ""
 	if c.PulsePort > 0 {
 		pulseListen = ":" + strconv.Itoa(c.PulsePort)
 	}
-	return config.Server{
+	srv := config.Server{
 		Listen:         ":" + strconv.Itoa(c.Port),
 		CertFile:       d.Cert(),
 		KeyFile:        d.Key(),
@@ -181,6 +220,14 @@ func (c Config) Server(d Dir) config.Server {
 		MaxConnections: 2048,
 		DNSCacheTTL:    300,
 	}
+	if c.IsRealityEnabled() {
+		srv.RealityUUID = c.RealityUUID
+		srv.RealityPrivateKey = c.RealityPrivateKey
+		srv.RealityShortID = c.RealityShortID
+		srv.RealityDest = net.JoinHostPort(c.RealitySNI, "443")
+		srv.RealityNames = []string{c.RealitySNI}
+	}
+	return srv
 }
 
 func randomToken(n int) string {

@@ -53,6 +53,9 @@ func Open(d Dir) (*Runtime, error) {
 	if _, e = EnsurePulseIdentity(d, &c); e != nil {
 		return nil, e
 	}
+	if _, e = EnsureRealityIdentity(d, &c); e != nil {
+		return nil, e
+	}
 	id, e := LoadIdentity(d)
 	if e != nil {
 		return nil, e
@@ -124,10 +127,14 @@ func (r *Runtime) Run(ctx context.Context) error {
 		go func() { pulseErrs <- r.pulseSrv.Serve(ctx) }()
 	}
 	go func() { errs <- panel.ListenAndServeTLS("", "") }()
+	realityDesc := ""
+	if r.cfg.IsRealityEnabled() {
+		realityDesc = fmt.Sprintf(" + iOS REALITY(%s)", r.cfg.RealitySNI)
+	}
 	if hop := r.cfg.HopRangeString(); hop != "" {
-		log.Printf("txlite %s 已启动：TCP Vision %d/TCP，TXPulse %d/UDP（跳跃 %s/UDP），面板 %d/TCP", Version, r.cfg.Port, r.cfg.PulsePort, hop, r.cfg.PanelPort)
+		log.Printf("txlite %s 已启动：TCP Vision%s %d/TCP，TXPulse %d/UDP（跳跃 %s/UDP），面板 %d/TCP", Version, realityDesc, r.cfg.Port, r.cfg.PulsePort, hop, r.cfg.PanelPort)
 	} else {
-		log.Printf("txlite %s 已启动：TCP Vision %d/TCP，TXPulse %d/UDP，面板 %d/TCP", Version, r.cfg.Port, r.cfg.PulsePort, r.cfg.PanelPort)
+		log.Printf("txlite %s 已启动：TCP Vision%s %d/TCP，TXPulse %d/UDP，面板 %d/TCP", Version, realityDesc, r.cfg.Port, r.cfg.PulsePort, r.cfg.PanelPort)
 	}
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()

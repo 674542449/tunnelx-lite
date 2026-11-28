@@ -15,6 +15,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/config"
 	"github.com/674542449/tunnelx-lite/internal/pki"
 	"github.com/674542449/tunnelx-lite/internal/pulse"
+	"github.com/674542449/tunnelx-lite/internal/vless"
 )
 
 func pickUDPPort(avoid ...int) int {
@@ -61,20 +62,29 @@ func InitFull(d Dir, name string, port, pulsePort, panelPort, hopStart, hopEnd i
 	if pulsePort == 0 {
 		pulsePort = pickUDPPort(port, panelPort)
 	}
+	realityPriv, _, e := vless.GenerateRealityKeyPair()
+	if e != nil {
+		return Config{}, "", e
+	}
 	id := hex.EncodeToString([]byte(randomToken(6)))[:12]
 	c := Config{
-		Name:          name,
-		Port:          port,
-		PulsePort:     pulsePort,
-		PulseObfs:     pulse.GenerateObfsKey(),
-		PulseHopStart: hopStart,
-		PulseHopEnd:   hopEnd,
-		PanelPort:     panelPort,
-		PanelPath:     randomToken(9),
-		Token:         NewToken(),
-		InnerName:     "edge-" + id + ".txlite.invalid",
-		PublicName:    "gw-" + id + ".txlite.invalid",
-		OutboundIP:    "ipv4",
+		Name:              name,
+		Port:              port,
+		PulsePort:         pulsePort,
+		PulseObfs:         pulse.GenerateObfsKey(),
+		PulseHopStart:     hopStart,
+		PulseHopEnd:       hopEnd,
+		RealityEnabled:    boolPtr(true),
+		RealityUUID:       vless.GenerateUUID(),
+		RealityPrivateKey: realityPriv,
+		RealityShortID:    vless.GenerateShortID(),
+		RealitySNI:        vless.DefaultRealitySNI,
+		PanelPort:         panelPort,
+		PanelPath:         randomToken(9),
+		Token:             NewToken(),
+		InnerName:         "edge-" + id + ".txlite.invalid",
+		PublicName:        "gw-" + id + ".txlite.invalid",
+		OutboundIP:        "ipv4",
 	}
 	password := randomToken(12)
 	hash, e := HashPassword(password)
@@ -140,6 +150,41 @@ func EnsurePulseIdentity(d Dir, c *Config) (bool, error) {
 		if err := writeFile(d.PulseKey(), pulseKey); err != nil {
 			return false, err
 		}
+	}
+	if changed {
+		if err := Save(d, *c); err != nil {
+			return false, err
+		}
+	}
+	return changed, nil
+}
+
+// EnsureRealityIdentity 为从旧版升级的节点自动补齐 VLESS + REALITY 密钥与 UUID（复用现有 TCP 端口，免开新端口）。
+func EnsureRealityIdentity(d Dir, c *Config) (bool, error) {
+	changed := false
+	if c.RealityEnabled == nil {
+		c.RealityEnabled = boolPtr(true)
+		changed = true
+	}
+	if c.RealityUUID == "" {
+		c.RealityUUID = vless.GenerateUUID()
+		changed = true
+	}
+	if c.RealityPrivateKey == "" {
+		priv, _, err := vless.GenerateRealityKeyPair()
+		if err != nil {
+			return false, err
+		}
+		c.RealityPrivateKey = priv
+		changed = true
+	}
+	if c.RealityShortID == "" {
+		c.RealityShortID = vless.GenerateShortID()
+		changed = true
+	}
+	if c.RealitySNI == "" {
+		c.RealitySNI = vless.DefaultRealitySNI
+		changed = true
 	}
 	if changed {
 		if err := Save(d, *c); err != nil {

@@ -12,8 +12,8 @@ android {
         applicationId = "com.txlite.android"
         minSdk = 29
         targetSdk = 35
-        versionCode = 603
-        versionName = "0.6.3"
+        versionCode = 700
+        versionName = "0.7.0"
 
         ndk {
             abiFilters += "arm64-v8a"

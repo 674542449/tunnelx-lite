@@ -36,7 +36,7 @@
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>分享链接</h2><span class="muted">支持 TCP Vision（txlite://）与自研抗丢包 UDP（txpulse://），均使用自签证书指纹校验</span></div>
+    <div class="card-head"><h2>分享链接</h2><span class="muted">支持 TCP Vision（txlite://）、TXPulse UDP（txpulse://）与 iOS 小火箭 VLESS + REALITY（vless://）</span></div>
     <div id="links"><p class="muted">正在探测服务器公网地址…</p></div>
   </section>
 
@@ -49,9 +49,16 @@
       <div class="card-head"><h2>设置</h2></div>
       <form id="settings" class="form">
         <label>名称<input name="name" maxlength="48" required></label>
-        <label>TCP 代理端口（Vision / H2）<input name="port" type="number" min="1" max="65535" required></label>
+        <label>TCP 代理端口（Vision / iOS REALITY 共用）<input name="port" type="number" min="1" max="65535" required></label>
         <label>TXPulse UDP 端口（自研类 Hy2）<input name="pulse_port" type="number" min="1" max="65535" required></label>
         <label>TXPulse 端口跳跃（可选，如 20000-20031，留空为单端口）<input name="pulse_hop" type="text" placeholder="留空表示单 UDP 端口"></label>
+        <label>iOS 小火箭（VLESS + REALITY + Vision）
+          <select name="reality_enabled">
+            <option value="true">启用（复用 TCP 端口，免开新端口）</option>
+            <option value="false">关闭（仅运行自研 txlite / TXPulse）</option>
+          </select>
+        </label>
+        <label>REALITY 伪装域名（SNI，建议选同区域冷门 TLS 1.3 站）<input name="reality_sni" type="text" placeholder="默认 itunes.apple.com"></label>
         <label>入站方式（入口：客户端连接服务器，支持 IPv4 / IPv6）
           <select name="inbound">
             <option value="">双栈（IPv4 + IPv6 可选）</option>
@@ -66,7 +73,7 @@
         </label>
         <label>限速 Mbps（整台服务器共享，0 表示不限）<input name="bandwidth_mbps" type="number" min="0" max="8589" step="any" required></label>
         <label class="wide">自定义分享地址（每行一个 IP 或域名，留空则自动使用公网 IPv4 / IPv6）<textarea name="hosts" rows="2"></textarea></label>
-        <div class="wide actions"><button type="submit" class="primary">保存设置</button><span class="muted">修改端口、入站 / 出站方式或限速后服务会自动重启</span></div>
+        <div class="wide actions"><button type="submit" class="primary">保存设置</button><span class="muted">修改端口、REALITY 设置、入站方式或限速后服务会自动重启</span></div>
       </form>
     </div>
   </section>

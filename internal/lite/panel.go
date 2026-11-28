@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/674542449/tunnelx-lite/internal/pulse"
+	"github.com/674542449/tunnelx-lite/internal/vless"
 	"rsc.io/qr"
 )
 
@@ -190,14 +191,16 @@ func (r *Runtime) login(w http.ResponseWriter, req *http.Request, prefix string)
 }
 
 type settings struct {
-	Name          string   `json:"name"`
-	Hosts         []string `json:"hosts"`
-	Port          int      `json:"port"`
-	PulsePort     int      `json:"pulse_port,omitempty"`
-	PulseHop      string   `json:"pulse_hop,omitempty"`
-	Inbound       string   `json:"inbound"`
-	OutboundIP    string   `json:"outbound_ip"`
-	BandwidthMbps float64  `json:"bandwidth_mbps"`
+	Name           string   `json:"name"`
+	Hosts          []string `json:"hosts"`
+	Port           int      `json:"port"`
+	PulsePort      int      `json:"pulse_port,omitempty"`
+	PulseHop       string   `json:"pulse_hop,omitempty"`
+	RealityEnabled *bool    `json:"reality_enabled,omitempty"`
+	RealitySNI     string   `json:"reality_sni,omitempty"`
+	Inbound        string   `json:"inbound"`
+	OutboundIP     string   `json:"outbound_ip"`
+	BandwidthMbps  float64  `json:"bandwidth_mbps"`
 }
 
 func (r *Runtime) api(w http.ResponseWriter, req *http.Request, api, session, prefix string) {
@@ -208,7 +211,7 @@ func (r *Runtime) api(w http.ResponseWriter, req *http.Request, api, session, pr
 		ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
 		v4, v6 := detectIPs(ctx)
 		cancel()
-		reply(w, 200, map[string]any{"version": Version, "name": c.Name, "uptime": int64(time.Since(r.started).Seconds()), "active": r.srv.Active.Load(), "uploaded": t.Uploaded, "downloaded": t.Downloaded, "port": c.Port, "pulse_port": c.PulsePort, "pulse_hop": c.HopRangeString(), "panel_port": c.PanelPort, "inbound": c.Inbound, "outbound_ip": c.OutboundIP, "bandwidth_limit": c.BandwidthLimit, "ipv4": v4, "ipv6": v6, "system": systemInfo(), "proxy_error": r.ProxyError()})
+		reply(w, 200, map[string]any{"version": Version, "name": c.Name, "uptime": int64(time.Since(r.started).Seconds()), "active": r.srv.Active.Load(), "uploaded": t.Uploaded, "downloaded": t.Downloaded, "port": c.Port, "pulse_port": c.PulsePort, "pulse_hop": c.HopRangeString(), "reality_enabled": c.IsRealityEnabled(), "reality_sni": c.RealitySNI, "panel_port": c.PanelPort, "inbound": c.Inbound, "outbound_ip": c.OutboundIP, "bandwidth_limit": c.BandwidthLimit, "ipv4": v4, "ipv6": v6, "system": systemInfo(), "proxy_error": r.ProxyError()})
 	case api == "links" && req.Method == "GET":
 		reply(w, 200, r.links(req.Context()))
 	case api == "qr" && req.Method == "GET":
@@ -228,11 +231,20 @@ func (r *Runtime) api(w http.ResponseWriter, req *http.Request, api, session, pr
 		w.Write(code.PNG())
 	case api == "settings" && req.Method == "GET":
 		c := r.config()
-		reply(w, 200, settings{Name: c.Name, Hosts: append([]string{}, c.Hosts...), Port: c.Port, PulsePort: c.PulsePort, PulseHop: c.HopRangeString(), Inbound: c.Inbound, OutboundIP: c.OutboundIP, BandwidthMbps: float64(c.BandwidthLimit) / 125000})
+		reply(w, 200, settings{Name: c.Name, Hosts: append([]string{}, c.Hosts...), Port: c.Port, PulsePort: c.PulsePort, PulseHop: c.HopRangeString(), RealityEnabled: boolPtr(c.IsRealityEnabled()), RealitySNI: c.RealitySNI, Inbound: c.Inbound, OutboundIP: c.OutboundIP, BandwidthMbps: float64(c.BandwidthLimit) / 125000})
 	case api == "settings" && req.Method == "POST":
 		r.saveSettings(w, req)
 	case api == "token/reset" && req.Method == "POST":
-		r.update(w, func(c *Config) bool { c.Token = NewToken(); c.PulseObfs = pulse.GenerateObfsKey(); return true }, "密钥与 TXPulse 混淆种子已重置，旧分享链接已失效")
+		r.update(w, func(c *Config) bool {
+			c.Token = NewToken()
+			c.PulseObfs = pulse.GenerateObfsKey()
+			c.RealityUUID = vless.GenerateUUID()
+			if priv, _, err := vless.GenerateRealityKeyPair(); err == nil {
+				c.RealityPrivateKey = priv
+			}
+			c.RealityShortID = vless.GenerateShortID()
+			return true
+		}, "全部协议密钥（Vision / TXPulse / iOS REALITY）已重置，旧分享链接已失效")
 	case api == "password" && req.Method == "POST":
 		var b struct {
 			Current string `json:"current"`
@@ -357,10 +369,28 @@ func (r *Runtime) saveSettings(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	realityOn := old.IsRealityEnabled()
+	if b.RealityEnabled != nil {
+		realityOn = *b.RealityEnabled
+	}
+	realitySNI := old.RealitySNI
+	if strings.TrimSpace(b.RealitySNI) != "" {
+		norm, err := vless.NormalizeSNI(b.RealitySNI)
+		if err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		realitySNI = norm
+	} else if realityOn && realitySNI == "" {
+		realitySNI = vless.DefaultRealitySNI
+	}
 	limit := int64(math.Round(b.BandwidthMbps * 125000))
 	r.update(w, func(c *Config) bool {
-		restart := c.Port != b.Port || c.PulsePort != pulsePort || c.PulseHopStart != hopStart || c.PulseHopEnd != hopEnd || c.Inbound != b.Inbound || c.OutboundIP != b.OutboundIP || c.BandwidthLimit != limit
+		wasReality := c.IsRealityEnabled()
+		restart := c.Port != b.Port || c.PulsePort != pulsePort || c.PulseHopStart != hopStart || c.PulseHopEnd != hopEnd || c.Inbound != b.Inbound || c.OutboundIP != b.OutboundIP || c.BandwidthLimit != limit || wasReality != realityOn || c.RealitySNI != realitySNI
 		c.Name, c.Hosts, c.Port, c.PulsePort, c.PulseHopStart, c.PulseHopEnd, c.Inbound, c.OutboundIP, c.BandwidthLimit = b.Name, hosts, b.Port, pulsePort, hopStart, hopEnd, b.Inbound, "ipv4", limit
+		c.RealityEnabled = boolPtr(realityOn)
+		c.RealitySNI = realitySNI
 		return restart
 	}, "设置已保存")
 }

@@ -21,7 +21,7 @@ import (
 	"github.com/674542449/tunnelx-lite/internal/tunmode"
 )
 
-const Version = "v0.6.3"
+const Version = "v0.7.0"
 
 type Settings struct {
 	SOCKS string `json:"socks_listen"`

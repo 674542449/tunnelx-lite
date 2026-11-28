@@ -111,7 +111,7 @@ func initialize(d lite.Dir, name string, port, pulsePort int, pulseHop string, p
 			return err
 		}
 	}
-	fmt.Println("初始化完成（已自动配置 TCP Vision 与 TXPulse 自签证书 UDP 双协议）。")
+	fmt.Println("初始化完成（已自动配置 TCP Vision、TXPulse UDP 与 iOS 小火箭 VLESS + REALITY 三协议）。")
 	fmt.Printf("面板密码：%s\n（只显示这一次；忘记后运行 txlite password 重置）\n", password)
 	return nil
 }
@@ -166,7 +166,13 @@ func printInfo(d lite.Dir) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	v4, v6 := lite.PublicIPs(ctx)
-	fmt.Printf("名称：%s\nTCP 代理端口：%d/TCP（Vision / H2）\n", c.Name, c.Port)
+	if c.IsRealityEnabled() {
+		fmt.Printf("名称：%s\nTCP 代理端口：%d/TCP（Vision + iOS VLESS/REALITY 共用，免开新端口）\n", c.Name, c.Port)
+		fmt.Printf("iOS 小火箭 (REALITY)：已启用（伪装域名 %s，xtls-rprx-vision）\n", c.RealitySNI)
+	} else {
+		fmt.Printf("名称：%s\nTCP 代理端口：%d/TCP（Vision）\n", c.Name, c.Port)
+		fmt.Println("iOS 小火箭 (REALITY)：已关闭")
+	}
 	if c.PulsePort > 0 {
 		if hop := c.HopRangeString(); hop != "" {
 			fmt.Printf("UDP 代理端口：%d/UDP（TXPulse 自签证书，端口跳跃 %s/UDP）\n", c.PulsePort, hop)

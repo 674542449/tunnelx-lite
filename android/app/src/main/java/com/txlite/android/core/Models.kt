@@ -31,7 +31,7 @@ data class DirectPresetItem(
 )
 
 data class EngineStatus(
-    val version: String = "v0.6.3",
+    val version: String = "v0.7.0",
     val connected: Boolean = false,
     val connectionState: String = "disconnected",
     val connectionStage: String = "disconnected",

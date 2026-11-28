@@ -64,6 +64,11 @@ type Server struct {
 	PulseObfs             string              `json:"pulse_obfs,omitempty"`
 	PulseHopStart         int                 `json:"pulse_hop_start,omitempty"`
 	PulseHopEnd           int                 `json:"pulse_hop_end,omitempty"`
+	RealityUUID           string              `json:"reality_uuid,omitempty"`
+	RealityPrivateKey     string              `json:"reality_private_key,omitempty"`
+	RealityShortID        string              `json:"reality_short_id,omitempty"`
+	RealityDest           string              `json:"reality_dest,omitempty"`
+	RealityNames          []string            `json:"reality_names,omitempty"`
 	Tokens                []string            `json:"tokens"`
 	PublicDir             string              `json:"public_dir,omitempty"`
 	AllowedPrivateTargets []string            `json:"allowed_private_targets,omitempty"`

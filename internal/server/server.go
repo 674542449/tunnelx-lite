@@ -120,6 +120,56 @@ func (s *Server) Serve(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
+	if s.realityConfigured() {
+		vlessSrv, verr := s.NewVLESSServer()
+		if verr != nil {
+			ln.Close()
+			return verr
+		}
+		vlessSrv.StartDetect()
+		txLn := newChanListener(ln.Addr())
+		go func() { errs <- s.HTTP.ServeTLS(txLn, "", "") }()
+		go func() {
+			for {
+				c, aerr := ln.Accept()
+				if aerr != nil {
+					if serveCtx.Err() == nil {
+						select {
+						case errs <- aerr:
+						default:
+						}
+					}
+					return
+				}
+				if tcp, ok := c.(*net.TCPConn); ok {
+					_ = tcp.SetNoDelay(true)
+					_ = tcp.SetKeepAlive(true)
+					_ = tcp.SetKeepAlivePeriod(30 * time.Second)
+				}
+				go func(raw net.Conn) {
+					sni, pc, perr := peekClientHelloSNI(raw, 5*time.Second)
+					if perr != nil {
+						_ = raw.Close()
+						return
+					}
+					if vlessSrv.MatchSNI(sni) {
+						vlessSrv.HandleConn(serveCtx, pc)
+						return
+					}
+					txLn.Push(wire.NewExactRecordConn(pc))
+				}(c)
+			}
+		}()
+		select {
+		case <-ctx.Done():
+		case e = <-errs:
+		}
+		cancelServe()
+		ln.Close()
+		txLn.Close()
+		s.HTTP.Close()
+		return e
+	}
 	go func() { errs <- s.HTTP.ServeTLS(tcpTuneListener{ln}, "", "") }()
 	select {
 	case <-ctx.Done():

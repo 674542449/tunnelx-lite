@@ -12,7 +12,25 @@ import (
 // per-stream bandwidth limiter or managed permit is active and both endpoints
 // are *net.TCPConn, it streams 4 MiB chunks through (*net.TCPConn).ReadFrom so
 // Linux executes kernel-space splice(2) with zero user-space copies.
+func unwrapTCP(c net.Conn) net.Conn {
+	type unwrapper interface{ Unwrap() net.Conn }
+	for c != nil {
+		u, ok := c.(unwrapper)
+		if !ok {
+			return c
+		}
+		next := u.Unwrap()
+		if next == nil || next == c {
+			return c
+		}
+		c = next
+	}
+	return c
+}
+
 func copyDirectTCP(dst, src net.Conn, idle time.Duration, counter, total *atomic.Int64, limit *Limiter, p Permit, upload bool, ctx context.Context) error {
+	dst = unwrapTCP(dst)
+	src = unwrapTCP(src)
 	if limit == nil && p == nil {
 		dstTCP, okDst := dst.(*net.TCPConn)
 		srcTCP, okSrc := src.(*net.TCPConn)

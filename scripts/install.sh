@@ -134,7 +134,7 @@ open_firewall(){
     for r in $(rules); do ufw allow "${r#*:}/${r%%:*}" >/dev/null && echo "ufw 已放行 ${r#*:}/${r%%:*}"; done
   fi
   iptables_ports insert
-  local hint="TCP $port（Vision 代理）、TCP $panel（面板）"
+  local hint="TCP $port（Vision + iOS REALITY 代理）、TCP $panel（面板）"
   if test "${pulse:-0}" -gt 0; then hint="$hint、UDP $pulse（TXPulse 代理）"; fi
   if test "${hop_s:-0}" -gt 0 && test "${hop_e:-0}" -gt "${hop_s:-0}"; then hint="$hint、UDP $hop_s-$hop_e（TXPulse 端口跳跃）"; fi
   echo "如果使用云服务器，请在安全组放行：$hint。"
